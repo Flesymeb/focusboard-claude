@@ -41,8 +41,8 @@ This README is the canonical issue ledger for this product: the host-derived per
 | --- | --- |
 | Status | PLANNED |
 | Focus | phase / prd_implementation |
-| Objective | Turn the bare Tauri bootstrap into the first reviewable vertical slice of Focusboard: a native desktop app whose landing surface is the PRD auth shell, with working account creation, single-use email verification through a local mail sink, sign in and sign out, and durable session persistence implemented on the Rust side of the IPC boundary. The slice must produce candidate-bound runtime, interface, persistence, security, and visual evidence sufficient for the prd_implementation_review phase gate and must follow the PRD section 9.1 visual direction. First-run path steps after authentication remain deferred to later loops. |
-| Strategy | `first_reviewable_auth_vertical_slice` |
+| Objective | Convert the bare scaffold into the first runnable Focusboard increment: a native Tauri app completing the authenticated core of the PRD first-run path — register, verify via local mail sink, sign in, create a project and tasks, see them in Inbox, Today, project, and calendar, and run a focus session — on durable SQLite persistence with a typed IPC boundary, recoverable failure states, and PRD section 9 visual direction, yielding candidate-bound evidence for prd_implementation_review. |
+| Strategy | `vertical-slice-foundation` |
 | Tasks | 1 |
 
 ### Developer
