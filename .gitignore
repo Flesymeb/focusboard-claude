@@ -1,0 +1,66 @@
+# Godot generated state
+.godot/
+.import/
+*.import
+*.uid
+*.tmp
+*.log
+
+# GameLoop runtime evidence and generated media
+artifacts/
+build/
+dist/
+evidence/
+recordings/
+runs/
+*.avi
+*.mkv
+*.mov
+*.mp4
+
+game/assets/**/*.glb
+game/assets/**/*.gltf
+game/assets/**/*.bin
+game/assets/**/*.fbx
+game/assets/**/*.obj
+game/assets/**/*.mtl
+game/assets/**/*.png
+game/assets/**/*.jpg
+game/assets/**/*.jpeg
+game/assets/**/*.webp
+game/assets/**/*.tga
+game/assets/**/*.exr
+game/assets/**/*.hdr
+game/assets/**/*.wav
+game/assets/**/*.ogg
+game/assets/**/*.mp3
+game/assets/**/*.flac
+product/assets/**/*.glb
+product/assets/**/*.gltf
+product/assets/**/*.bin
+product/assets/**/*.fbx
+product/assets/**/*.obj
+product/assets/**/*.mtl
+product/assets/**/*.png
+product/assets/**/*.jpg
+product/assets/**/*.jpeg
+product/assets/**/*.webp
+product/assets/**/*.tga
+product/assets/**/*.exr
+product/assets/**/*.hdr
+product/assets/**/*.wav
+product/assets/**/*.ogg
+product/assets/**/*.mp3
+product/assets/**/*.flac
+
+# Python/editor caches
+__pycache__/
+*.pyc
+.DS_Store
+
+# HoH runtime state: seal staging and candidate backups are host-local
+# recovery data, never product history. Native build outputs and installed
+# dependencies are reproducible and must not enter the sealed tree.
+.hoh/staging/
+node_modules/
+target/
