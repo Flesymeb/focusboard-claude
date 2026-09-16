@@ -41,8 +41,8 @@ This README is the canonical issue ledger for this product: the host-derived per
 | --- | --- |
 | Status | PLANNED |
 | Focus | phase / prd_implementation |
-| Objective | Convert the bare scaffold into the first runnable Focusboard increment: a native Tauri app completing the authenticated core of the PRD first-run path — register, verify via local mail sink, sign in, create a project and tasks, see them in Inbox, Today, project, and calendar, and run a focus session — on durable SQLite persistence with a typed IPC boundary, recoverable failure states, and PRD section 9 visual direction, yielding candidate-bound evidence for prd_implementation_review. |
-| Strategy | `vertical-slice-foundation` |
+| Objective | Establish the thinnest runnable Focusboard slice: a real native Tauri 2 desktop app whose verified-session auth boundary of the PRD section 3 first-run path — register, verify email through a configuration-driven local mail sink, sign in and out, and session persistence across refresh — runs on durable SQLite with hashed credentials, single-use expiring tokens, and a typed IPC contract, styled to the PRD section 9 direction, so prd_implementation_review gains its first genuine runtime, persistence, security, and visual evidence. |
+| Strategy | `thinnest_runnable_auth_slice` |
 | Tasks | 1 |
 
 ### Developer
