@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { PublicUser, invoke, toCommandError } from "../api";
 
 function FieldError({ message }: { message: string | null }) {
@@ -164,10 +164,33 @@ export function VerifyEmailView(props: {
   goTo: (view: "sign-in") => void;
   tokenFromLink?: string | null;
 }) {
-  const [token, setToken] = useState(props.tokenFromLink ?? "");
+  const [token, setToken] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const lastAutoVerified = useRef<string | null>(null);
+
+  async function verify(value: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await invoke("verify_email", { token: tokenFromInput(value) });
+      props.onVerified(props.email);
+    } catch (err) {
+      setError(toCommandError(err).message);
+      setBusy(false);
+    }
+  }
+
+  // A link activation verifies immediately; the token value itself is never
+  // rendered into the paste field so it stays out of logs and captures.
+  useEffect(() => {
+    const linkToken = props.tokenFromLink;
+    if (!linkToken || lastAutoVerified.current === linkToken) return;
+    lastAutoVerified.current = linkToken;
+    void verify(linkToken);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.tokenFromLink]);
 
   async function resend() {
     setStatus(null);
@@ -182,15 +205,8 @@ export function VerifyEmailView(props: {
 
   async function submit(e: FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await invoke("verify_email", { token: tokenFromInput(token) });
-      props.onVerified(props.email);
-    } catch (err) {
-      setError(toCommandError(err).message);
-      setBusy(false);
-    }
+    if (!token.trim()) return;
+    await verify(token);
   }
 
   return (
@@ -239,4 +255,11 @@ export function tokenFromInput(input: string): string {
   const value = input.trim();
   const match = value.match(/token=([A-Za-z0-9]+)/);
   return match ? match[1] : value;
+}
+
+/** Extracts a token only from a genuine focusboard:// activation link. */
+export function tokenFromLinkUrl(url: string): string | null {
+  if (!url.startsWith("focusboard://")) return null;
+  const match = url.match(/token=([A-Za-z0-9]+)/);
+  return match ? match[1] : null;
 }

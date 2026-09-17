@@ -1,1 +1,1 @@
-{}
+{"main":{"identifier":"main","description":"Core event delivery for the main window (deep-link activation).","local":true,"windows":["main"],"permissions":["core:event:default"]}}

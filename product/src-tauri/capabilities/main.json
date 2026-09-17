@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "Core event delivery for the main window (deep-link activation).",
+  "windows": ["main"],
+  "permissions": ["core:event:default"]
+}

@@ -10,6 +10,7 @@ import {
   CreateAccountView,
   SignInView,
   VerifyEmailView,
+  tokenFromLinkUrl,
 } from "./auth/AuthViews";
 import { InboxView } from "./views/InboxView";
 import { ProjectsView } from "./views/ProjectsView";
@@ -60,7 +61,9 @@ export default function App() {
 
   const bootstrap = useCallback(async () => {
     try {
-      const linkToken = verifyTokenFromHash();
+      const hashToken = verifyTokenFromHash();
+      const linkToken =
+        hashToken ?? tokenFromLinkUrl((await invoke<string | null>("take_deep_link")) ?? "");
       const user = await invoke<PublicUser | null>("session_status");
       if (user) {
         setSession({ kind: "signedIn", user });
@@ -88,6 +91,31 @@ export default function App() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  // Warm deep-link activation: the running instance is focused by the OS and
+  // the delivered link is routed to the verify view for the anonymous shell.
+  useEffect(() => {
+    let disposed = false;
+    let dispose: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<string>("deep-link", (event) => {
+        const token = tokenFromLinkUrl(event.payload ?? "");
+        if (!token) return;
+        setSession((prev) =>
+          prev.kind === "anonymous"
+            ? { ...prev, view: "verify", tokenFromLink: token }
+            : prev,
+        );
+      }),
+    ).then((unlisten) => {
+      if (disposed) unlisten();
+      else dispose = unlisten;
+    });
+    return () => {
+      disposed = true;
+      dispose?.();
+    };
+  }, []);
 
   const refreshLists = useCallback(async () => {
     if (session.kind !== "signedIn") return;

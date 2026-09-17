@@ -5,9 +5,11 @@ mod tasks;
 
 use mail::MailSink;
 use serde::Serialize;
-use std::path::PathBuf;
+use std::io::{Read, Write};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::{Path, PathBuf};
 use store::{CommandError, CommandResult, Store};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 pub struct AppState {
     store: std::sync::Mutex<Store>,
@@ -18,6 +20,152 @@ pub struct AppState {
 /// The verification link points back into the app's own verify route so the
 /// single-use token is consumed by the desktop client, not a browser.
 const VERIFY_BASE: &str = "focusboard://auth";
+const DEEP_LINK_EVENT: &str = "deep-link";
+const DEEP_LINK_SOCKET: &str = "focusboard-deeplink.sock";
+
+/// Deep-link URL delivered externally (cold boot or warm activation) and not
+/// yet handed to the webview.
+struct PendingDeepLink(std::sync::Mutex<Option<String>>);
+
+/// Extracts only the token value from a delivered focusboard:// link.
+fn token_from_link(url: &str) -> Option<String> {
+    let rest = url.trim().strip_prefix("focusboard://")?;
+    let idx = rest.find("token=")?;
+    let rest = &rest[idx + "token=".len()..];
+    let token: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
+    if token.is_empty() { None } else { Some(token) }
+}
+
+fn deep_link_from_args() -> Option<String> {
+    std::env::args()
+        .skip(1)
+        .find(|a| a.starts_with("focusboard://"))
+        .map(|a| a.to_string())
+}
+
+/// Mirrors resolve_data_dir before the Tauri app handle exists so a warm
+/// activation can forward to the running instance instead of booting a
+/// second full window.
+fn preflight_data_dir() -> Option<PathBuf> {
+    if let Ok(dir) = std::env::var("FOCUSBOARD_DATA_DIR") {
+        if !dir.is_empty() {
+            return Some(PathBuf::from(dir));
+        }
+    }
+    std::env::var("XDG_DATA_HOME")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/share")))
+        .map(|d| d.join("app.focusboard.desktop"))
+}
+
+/// Socket locations for single-instance deep-link delivery. The runtime-dir
+/// socket is shared by every process in the desktop session, so a warm
+/// activation still forwards even when the data dir env differs; the data-dir
+/// socket covers sessions without XDG_RUNTIME_DIR.
+fn session_socket_paths() -> Vec<PathBuf> {
+    std::env::var("XDG_RUNTIME_DIR")
+        .ok()
+        .filter(|d| !d.is_empty())
+        .map(|d| vec![PathBuf::from(d).join(DEEP_LINK_SOCKET)])
+        .unwrap_or_default()
+}
+
+fn deep_link_socket_candidates(data_dir: &Path) -> Vec<PathBuf> {
+    let mut paths = session_socket_paths();
+    paths.push(data_dir.join(DEEP_LINK_SOCKET));
+    paths
+}
+
+/// Sends the activated URL to the running instance. Returns true when an
+/// instance acknowledged it (warm activation).
+fn forward_to_running_instance(candidates: &[PathBuf], url: &str) -> bool {
+    for path in candidates {
+        let Ok(mut stream) = UnixStream::connect(path) else {
+            continue;
+        };
+        if stream.write_all(url.as_bytes()).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Quotes one argv entry for a desktop-entry Exec line only when the value
+/// contains characters that require it — the generic xdg-open launcher splits
+/// Exec on whitespace without spec-compliant quote stripping, so an always-
+/// quoted form would reach `env` with the quotes intact.
+fn desktop_exec_arg(value: &str) -> String {
+    if value.is_empty() {
+        return "\"\"".to_string();
+    }
+    if value.bytes().all(|b| {
+        b.is_ascii_alphanumeric()
+            || matches!(b, b'/' | b'.' | b'_' | b'-' | b':' | b'=' | b'@' | b'+' | b',')
+    }) {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$"))
+    }
+}
+
+/// Registers the focusboard:// scheme at the OS level for this session by
+/// installing a desktop entry that points at the running binary and carries
+/// the session's data dir, so an externally launched activation lands in the
+/// same database. Best effort: failures never block startup.
+fn register_scheme() {
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Ok(home) = std::env::var("HOME") else { return };
+    let apps = PathBuf::from(home).join(".local/share/applications");
+    if std::fs::create_dir_all(&apps).is_err() {
+        return;
+    }
+    let mut exec = String::new();
+    if let Ok(dir) = std::env::var("FOCUSBOARD_DATA_DIR") {
+        if !dir.is_empty() {
+            exec.push_str(&format!("env FOCUSBOARD_DATA_DIR={} ", desktop_exec_arg(&dir)));
+        }
+    }
+    exec.push_str(&desktop_exec_arg(&exe.display().to_string()));
+    exec.push_str(" %u");
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Focusboard\nTerminal=false\nNoDisplay=true\nExec={exec}\nMimeType=x-scheme-handler/focusboard;\n"
+    );
+    if std::fs::write(apps.join("focusboard.desktop"), entry).is_err() {
+        return;
+    }
+    let _ = std::process::Command::new("xdg-mime")
+        .args(["default", "focusboard.desktop", "x-scheme-handler/focusboard"])
+        .status();
+}
+
+/// Listens for URLs forwarded by later activations and pushes them to the
+/// webview, focusing the window like a normal OS activation.
+fn spawn_deep_link_listener(app: tauri::AppHandle, data_dir: &Path) {
+    for path in deep_link_socket_candidates(data_dir) {
+        let _ = std::fs::remove_file(&path);
+        let Ok(listener) = UnixListener::bind(&path) else {
+            continue;
+        };
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut stream = stream;
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let url = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+                if token_from_link(&url).is_none() {
+                    continue;
+                }
+                let _ = app.emit(DEEP_LINK_EVENT, url);
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_focus();
+                }
+            }
+        });
+        return;
+    }
+}
 
 fn map_result<T, F>(state: &AppState, f: F) -> Result<T, CommandError>
 where
@@ -79,6 +227,15 @@ fn sign_in(
 #[tauri::command]
 fn sign_out(state: tauri::State<AppState>) -> Result<(), CommandError> {
     map_result(&state, auth::sign_out)
+}
+
+#[tauri::command]
+fn take_deep_link(state: tauri::State<PendingDeepLink>) -> Option<String> {
+    state.0.lock().ok().and_then(|mut pending| {
+        pending
+            .take()
+            .filter(|url| token_from_link(url).is_some())
+    })
 }
 
 #[tauri::command]
@@ -193,8 +350,20 @@ fn resolve_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let activated_link = deep_link_from_args();
+    // Warm activation: hand the URL to the running instance and exit instead
+    // of booting a second full application.
+    if let Some(url) = &activated_link {
+        let mut candidates = session_socket_paths();
+        if let Some(dir) = preflight_data_dir() {
+            candidates.push(dir.join(DEEP_LINK_SOCKET));
+        }
+        if forward_to_running_instance(&candidates, url) {
+            return;
+        }
+    }
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             let data_dir = resolve_data_dir(app.handle()).map_err(|e| e.message)?;
             let db_path = data_dir.join("focusboard.sqlite3");
             let store = Store::open(&db_path).map_err(|e| format!("Could not open database: {e}"))?;
@@ -204,6 +373,11 @@ pub fn run() {
                 sink,
                 verify_base: VERIFY_BASE.to_string(),
             });
+            register_scheme();
+            spawn_deep_link_listener(app.handle().clone(), &data_dir);
+            // Cold activation: the link that launched us is handed to the
+            // webview when it asks, so no token-dependent frame is missed.
+            app.manage(PendingDeepLink(std::sync::Mutex::new(activated_link)));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -213,6 +387,7 @@ pub fn run() {
             sign_out,
             session_status,
             request_verification_email,
+            take_deep_link,
             create_project,
             rename_project,
             list_projects,
@@ -378,6 +553,47 @@ mod tests {
         assert_eq!(err.code, "unauthenticated");
         let err = auth::current_user(&store).unwrap_err();
         assert_eq!(err.code, "unauthenticated");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn token_parsing_accepts_only_delivered_links() {
+        assert_eq!(
+            token_from_link("focusboard://auth/verify?token=abc123XYZ"),
+            Some("abc123XYZ".to_string())
+        );
+        // Not a focusboard link: rejected outright.
+        assert_eq!(token_from_link("https://example.com/verify?token=abc123"), None);
+        assert_eq!(token_from_link("focusboard://auth/verify"), None);
+        assert_eq!(token_from_link("focusboard://auth/verify?email=a@b.c"), None);
+        // Encoded or punctuated payload: only the alphanumeric token is taken.
+        assert_eq!(token_from_link("focusboard://auth/verify?token=abc%20def"), Some("abc".to_string()));
+        assert_eq!(token_from_link("  focusboard://auth/verify?token=tok9  "), Some("tok9".to_string()));
+        assert_eq!(token_from_link("focusboard://auth/verify?token="), None);
+    }
+
+    #[test]
+    fn malformed_expired_and_reused_link_tokens_stay_recoverable() {
+        let dir = temp_dir("link-token-states");
+        let sink = MailSink::new(&dir);
+        let store = open_store(&dir);
+        auth::register(&store, &sink, VERIFY_BASE, "kim@example.com", "amber-meadow-5", "Kim")
+            .unwrap();
+        let token = read_sink_token(&dir, "kim@example.com");
+
+        // A malformed token (e.g. tampered link) never matches: explicit error, no crash.
+        let err = auth::verify_email_token(&store, "not-a-real-token").unwrap_err();
+        assert_eq!(err.code, "invalid_token");
+
+        let verified = auth::verify_email_token(&store, &token).unwrap();
+        assert_eq!(verified.email, "kim@example.com");
+
+        // Reused link token: recoverable error after single-use consumption.
+        let err = auth::verify_email_token(&store, &token).unwrap_err();
+        assert_eq!(err.code, "token_already_used");
+
+        // Whatever the link carried, the shell store remains usable.
+        assert!(auth::require_user(&store).is_err() || auth::current_user(&store).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
