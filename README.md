@@ -21,9 +21,9 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Field | Value |
 | --- | --- |
-| Open | 6 |
-| Closed | 6 |
-| All | 12 |
+| Open | 12 |
+| Closed | 5 |
+| All | 17 |
 
 ---
 
@@ -33,7 +33,7 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Candidate | Base | Current state |
 | --- | --- | --- |
-| `loop-12-9dad3086a4fc` | `development_snapshot:attempt-137b1337bcb8d20b3bd2792d` | NEEDS VISUAL QA |
+| `loop-12-9dad3086a4fc` | `development_snapshot:attempt-137b1337bcb8d20b3bd2792d` | FAIL |
 
 ### Project Planner
 
@@ -60,7 +60,28 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Field | Value |
 | --- | --- |
-| Status | UNTESTED |
+| Status | FAIL |
+| Candidate | `loop-12-9dad3086a4fc` |
+| Product completion | IN PROGRESS |
+| Review scope | `golden_path` |
+| Findings | 12 (8 blocking focus items) |
+
+### Evidence / QA findings
+
+| ID | Severity | Impact | Release risk | Summary |
+| --- | --- | --- | --- | --- |
+| `fnd.prd-auth-recovery-flows-missing` | MAJOR | USER BLOCKING | HIGH | PRD 4.2 and 8 require a forgot-password request, single-use password reset, and a reset email action page; the candidate implements only sign-in, create-account, and verify-email surfaces, so password recovery is impossible. |
+| `fnd.prd-projects-board-archive-missing` | MAJOR | USER BLOCKING | HIGH | PRD 6.2 requires a compact board view with Planned/In progress/Done columns, project archive/restore, and a keyboard-accessible drag alternative; the candidate renders a single list per project with create/rename only. |
+| `fnd.prd-inbox-search-filters-missing` | MAJOR | USER BLOCKING | HIGH | PRD 6.1 requires Inbox search plus priority, due, and completion filters; the candidate has only an open/completed split, and the Task model's priority field has no UI to set or display it. |
+| `fnd.prd-settings-depth-missing` | MAJOR | USER BLOCKING | HIGH | PRD 8 requires Settings to cover profile, timezone, notification preferences, password, sessions, and account deletion request; the candidate implements only profile, a global reminder toggle, and reminder deliveries. |
+| `fnd.prd-data-model-subtask-activity-missing` | MAJOR | USER BLOCKING | MEDIUM | PRD 5 mandates Subtask (task id, title, completion state, order) and ActivityEvent (entity ref, event type, timestamp, history render) among authoritative entities that must exist; neither exists anywhere in the candidate. |
+| `fnd.deeplink-external-activation-still-unproven` | MAJOR | INTERNAL | HIGH | Out-of-process focusboard:// activation remains receipt-unproven: external_deeplink is not_run in both loop-12 receipts with counters unread (warm=0, cold=0), while registration prerequisites are now independently proven by the host-run built-config scheme test. |
+| `fnd.section3-external-journey-still-unproven` | MAJOR | INTERNAL | HIGH | PRD section-3 remains corroborated but not proven as an external user journey: the only journey verdict is the host-triggered renderer self-drive (PASS 16/16 twice, explicitly untrusted authority); typed-form registration, email-link follow, and UI sign-out/sign-in persistence are still runtime-unproven. |
+| `fnd.isolated-store-probe-still-foreign-path` | MINOR | INTERNAL | LOW | fixed_pending_verify is disproven: the host collector's isolated_native_store check still probes the foreign com.focusboard.app data path while the product identifier is app.focusboard.desktop, so the check stays false and unlabeled for a fourth loop. |
+| `fnd.hydration-marker-miscalibration-persists` | MINOR | INTERNAL | LOW | Host receipt hydration calibration is still wrong: all 6 signed-in surface rows report active_nav='page', matched=false, hydrated=false while every bound capture shows the correct heading and highlighted nav item. |
+| `fnd.state-board-states-still-uncaptured` | MAJOR | INTERNAL | HIGH | PRD 9.2 recovery and responsive states remain uncaptured at runtime on this loop's bound evidence: every capture is a 1280x800 success state; network-error-with-retry, narrow-viewport Today, and the email-settings detail have no bound live capture. |
+| `fnd.whitebox-advisory-stale-layout-persists` | MINOR | INTERNAL | LOW | Advisory white-box lane remains miscalibrated to the single-crate layout: source-contract blocks on an absent src-tauri/src/commands.rs and semantic-implementation reports 1/5 while cargo links rusqlite, 22 unit tests pass, and captures prove durable data. |
+| `fnd.rustfmt-regression-librs1246` | MINOR | INTERNAL | LOW | cargo fmt --check regresses on the frozen candidate: a formatting diff at src-tauri/src/lib.rs:1246 in the new built-config scheme assertion reintroduces the style debt previously closed as find.rustfmt-style-debt. |
 
 ---
 
@@ -588,5 +609,5 @@ This README is the canonical issue ledger for this product: the host-derived per
 - Latest attempted: `loop-12-9dad3086a4fc`
 - Latest warm start: `loop-12-543cf61f25fc`
 - Last published: `loop-12-9dad3086a4fc`
-- Best verified: `loop-10-543cf61f25fc`
+- Best verified: `loop-12-9dad3086a4fc`
 - Generated by the HoH host from immutable run evidence.
