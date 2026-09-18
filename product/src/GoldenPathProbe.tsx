@@ -20,6 +20,12 @@ interface DeepLinkStatus {
   last_verify_outcome: string | null;
 }
 
+interface StoreLocation {
+  identifier: string;
+  data_dir: string;
+  sqlite_file: string;
+}
+
 interface ProbeReport {
   phase: ProbePhase;
   step: string;
@@ -324,6 +330,7 @@ export function GoldenPathProbe(props: {
     warm_forwarded: 0,
     last_verify_outcome: null,
   });
+  const [store, setStore] = useState<StoreLocation | null>(null);
   const driving = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -354,6 +361,12 @@ export function GoldenPathProbe(props: {
 
   useEffect(() => {
     let alive = true;
+    // Store location is static per launch: read it once.
+    invoke<StoreLocation>("store_location")
+      .then((location) => {
+        if (alive) setStore(location);
+      })
+      .catch(() => undefined);
     const id = window.setInterval(() => {
       // Pause during the drive: the measurement gate must not add concurrent
       // IPC contention to the journey it is measuring.
@@ -384,6 +397,9 @@ export function GoldenPathProbe(props: {
       data-deeplink-warm-forwarded={deeplink.warm_forwarded}
       data-deeplink-pending={deeplink.pending_now ? "true" : "false"}
       data-deeplink-last-outcome={deeplink.last_verify_outcome ?? ""}
+      data-store-identifier={store?.identifier ?? ""}
+      data-store-data-dir={store?.data_dir ?? ""}
+      data-store-sqlite-file={store?.sqlite_file ?? ""}
     >
       <span className="golden-path-probe-summary" data-goldenpath-summary="">
         {summaryText(report)}

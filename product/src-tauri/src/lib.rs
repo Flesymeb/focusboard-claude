@@ -13,6 +13,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use store::{CommandError, CommandResult, Store};
 use tauri::{Emitter, Manager};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 pub struct AppState {
     store: std::sync::Mutex<Store>,
@@ -25,6 +26,7 @@ pub struct AppState {
 const VERIFY_BASE: &str = "focusboard://auth";
 const DEEP_LINK_EVENT: &str = "deep-link";
 const DEEP_LINK_SOCKET: &str = "focusboard-deeplink.sock";
+const SQLITE_FILE: &str = "focusboard.sqlite3";
 
 /// Deep-link URL delivered externally (cold boot or warm activation) and not
 /// yet handed to the webview.
@@ -372,6 +374,22 @@ fn deep_link_status(
     ledger.status(pending.peek())
 }
 
+/// Runtime-state receipt field naming the identifier-derived durable store so
+/// the isolated-store advisory can measure the real app.focusboard.desktop
+/// data directory instead of a foreign path. Directory and file name only —
+/// never token or session material.
+#[derive(Serialize, Clone)]
+struct StoreLocation {
+    identifier: String,
+    data_dir: String,
+    sqlite_file: String,
+}
+
+#[tauri::command]
+fn store_location(state: tauri::State<StoreLocation>) -> StoreLocation {
+    state.inner().clone()
+}
+
 #[tauri::command]
 fn session_status(state: tauri::State<AppState>) -> Result<Option<auth::PublicUser>, CommandError> {
     match map_result(&state, auth::current_user) {
@@ -690,9 +708,10 @@ pub fn run() {
         }
     }
     tauri::Builder::default()
+        .plugin(tauri_plugin_deep_link::init())
         .setup(move |app| {
             let data_dir = resolve_data_dir(app.handle()).map_err(|e| e.message)?;
-            let db_path = data_dir.join("focusboard.sqlite3");
+            let db_path = data_dir.join(SQLITE_FILE);
             let store =
                 Store::open(&db_path).map_err(|e| format!("Could not open database: {e}"))?;
             let sink = MailSink::new(&data_dir);
@@ -701,8 +720,20 @@ pub fn run() {
                 sink,
                 verify_base: VERIFY_BASE.to_string(),
             });
-            register_scheme();
+            // The built configuration declares the focusboard:// scheme; this
+            // registers it with the OS so an external activation routes
+            // through the handler instead of a direct binary launch. The
+            // session-level desktop entry stays as a fallback for systems
+            // where the plugin's registration cannot run.
+            if app.deep_link().register_all().is_err() {
+                register_scheme();
+            }
             app.manage(DeepLinkLedger::default());
+            app.manage(StoreLocation {
+                identifier: app.config().identifier.clone(),
+                data_dir: data_dir.display().to_string(),
+                sqlite_file: SQLITE_FILE.to_string(),
+            });
             app.manage(golden_path::GoldenPathDrive::new());
             spawn_deep_link_listener(app.handle().clone(), &data_dir);
             // Cold activation: the link that launched us is handed to the
@@ -740,6 +771,7 @@ pub fn run() {
             list_focus_sessions,
             active_focus_session,
             deep_link_status,
+            store_location,
             golden_path::golden_path_drive_start,
             golden_path::golden_path_drive_register,
             golden_path::golden_path_drive_consume_verification,
@@ -1201,6 +1233,43 @@ mod tests {
 
         // Whatever the link carried, the shell store remains usable.
         assert!(auth::require_user(&store).is_err() || auth::current_user(&store).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn built_config_registers_focusboard_scheme() {
+        let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let raw = std::fs::read_to_string(manifest.join("tauri.conf.json")).unwrap();
+        let config: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(config["identifier"], "app.focusboard.desktop");
+        let schemes = config["plugins"]["deep-link"]["desktop"]["schemes"]
+            .as_array()
+            .unwrap_or_else(|| panic!("deep-link desktop schemes missing from built config"));
+        assert!(
+            schemes
+                .iter()
+                .any(|s| s.as_str() == Some("focusboard")),
+            "focusboard scheme not registered in built config: {schemes:?}"
+        );
+    }
+
+    #[test]
+    fn preflight_data_dir_is_identifier_derived() {
+        let dir = temp_dir("store-receipt-xdg");
+        let prev_xdg = std::env::var("XDG_DATA_HOME").ok();
+        let prev_focus = std::env::var("FOCUSBOARD_DATA_DIR").ok();
+        std::env::remove_var("FOCUSBOARD_DATA_DIR");
+        std::env::set_var("XDG_DATA_HOME", &dir);
+        let resolved = preflight_data_dir();
+        match prev_xdg {
+            Some(value) => std::env::set_var("XDG_DATA_HOME", value),
+            None => std::env::remove_var("XDG_DATA_HOME"),
+        }
+        if let Some(value) = prev_focus {
+            std::env::set_var("FOCUSBOARD_DATA_DIR", value);
+        }
+        assert_eq!(resolved.unwrap(), dir.join("app.focusboard.desktop"));
+        assert_eq!(SQLITE_FILE, "focusboard.sqlite3");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -6,6 +6,13 @@
   "build": {
     "frontendDist": "../dist"
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["focusboard"]
+      }
+    }
+  },
   "app": {
     "windows": [
       {
