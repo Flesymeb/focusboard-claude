@@ -1,5 +1,12 @@
 import { useEffect, useState } from "react";
-import { Project, Task, invoke, toCommandError } from "../api";
+import {
+  COMMON_TIMEZONES,
+  Project,
+  Reminder,
+  Task,
+  invoke,
+  toCommandError,
+} from "../api";
 import { Icon } from "../ui";
 
 /**
@@ -13,17 +20,35 @@ export function TaskRow(props: {
   onChanged: () => void;
   showProject?: boolean;
   showDue?: boolean;
+  showReminder?: boolean;
+  reminder?: Reminder | null;
+  defaultTimezone?: string;
 }) {
   const { task, projects, onChanged } = props;
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [projectValue, setProjectValue] = useState(task.project_id ?? "");
   const [dueValue, setDueValue] = useState(task.due_date ?? "");
+  const [reminderTime, setReminderTime] = useState("");
+  const [reminderTz, setReminderTz] = useState(props.defaultTimezone || "UTC");
+  const [reminderNote, setReminderNote] = useState<string | null>(null);
 
   useEffect(() => {
     setProjectValue(task.project_id ?? "");
     setDueValue(task.due_date ?? "");
   }, [task.project_id, task.due_date]);
+
+  const reminder = props.reminder ?? null;
+  useEffect(() => {
+    if (!reminder) {
+      setReminderTime("");
+      return;
+    }
+    const local = new Date(reminder.scheduled_at);
+    const pad = (n: number) => `${n}`.padStart(2, "0");
+    setReminderTime(`${pad(local.getHours())}:${pad(local.getMinutes())}`);
+    setReminderTz(reminder.timezone);
+  }, [reminder?.id, reminder?.scheduled_at]);
 
   async function mutate(fn: () => Promise<unknown>, revert: () => void) {
     setBusy(true);
@@ -67,15 +92,34 @@ export function TaskRow(props: {
     );
   };
 
+  const applyReminder = () => {
+    if (!reminderTime || !dueValue) {
+      setError("A reminder needs a due date and a time.");
+      return;
+    }
+    const moment = `${dueValue}T${reminderTime}`;
+    mutate(
+      () =>
+        invoke("set_task_reminder", {
+          taskId: task.id,
+          reminderTime: moment,
+          timezone: reminderTz,
+        }),
+      () => undefined
+    ).then(() => setReminderNote("Reminder saved."));
+  };
+
   const done = task.status === "completed";
+  const showReminder = props.showReminder ?? true;
 
   return (
-    <li className={`task-row${done ? " done" : ""}`} data-task-id={task.id}>
+    <li className={`task-row${done ? " done" : ""}`} data-task-id={task.id} data-testid="task-row">
       <button
         type="button"
         className="task-check"
         onClick={toggle}
         disabled={busy}
+        data-testid="task-check"
         aria-label={done ? `Mark ${task.title} as open` : `Complete ${task.title}`}
       >
         {done ? <Icon name="check" size={14} /> : null}
@@ -109,6 +153,64 @@ export function TaskRow(props: {
               disabled={busy}
             />
           </label>
+        )}
+        {showReminder && (
+          <span className="task-reminder">
+            <label className="task-reminder-time">
+              <span className="visually-hidden">Reminder time for {task.title}</span>
+              <input
+                type="time"
+                value={reminderTime}
+                onChange={(e) => setReminderTime(e.target.value)}
+                disabled={busy}
+                data-testid="reminder-time"
+              />
+            </label>
+            <label className="task-reminder-tz">
+              <span className="visually-hidden">Reminder timezone for {task.title}</span>
+              <select
+                value={reminderTz}
+                onChange={(e) => setReminderTz(e.target.value)}
+                disabled={busy}
+                data-testid="reminder-timezone"
+              >
+                {!COMMON_TIMEZONES.includes(reminderTz) && (
+                  <option value={reminderTz}>{reminderTz}</option>
+                )}
+                {COMMON_TIMEZONES.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <button
+              type="button"
+              className="button small"
+              onClick={applyReminder}
+              disabled={busy || !reminderTime}
+              data-testid="reminder-apply"
+            >
+              <Icon name="mail" size={13} /> Remind
+            </button>
+            {reminder ? (
+              <span className="reminder-state" data-reminder-status={reminder.status}>
+                {reminder.status === "sent"
+                  ? "Reminder sent"
+                  : reminder.status === "scheduled"
+                    ? "Reminder scheduled"
+                    : reminder.status === "skipped"
+                      ? "Reminder skipped (task done)"
+                      : reminder.status === "failed"
+                        ? "Reminder failed — retry in Settings"
+                        : reminder.status === "cancelled"
+                          ? "Reminder cancelled"
+                          : reminder.status}
+              </span>
+            ) : reminderNote ? (
+              <span className="reminder-state">{reminderNote}</span>
+            ) : null}
+          </span>
         )}
       </div>
       {error ? (

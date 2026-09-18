@@ -1,7 +1,9 @@
 import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import {
+  FocusSession,
   Project,
   PublicUser,
+  Reminder,
   Task,
   invoke,
   toCommandError,
@@ -12,10 +14,13 @@ import {
   VerifyEmailView,
   tokenFromLinkUrl,
 } from "./auth/AuthViews";
+import { CalendarView } from "./views/CalendarView";
+import { FocusView } from "./views/FocusView";
 import { InboxView } from "./views/InboxView";
 import { ProjectsView } from "./views/ProjectsView";
+import { SettingsView } from "./views/SettingsView";
 import { TodayView } from "./views/TodayView";
-import { EmptyState, Icon } from "./ui";
+import { Icon } from "./ui";
 
 type AuthView = "sign-in" | "create-account" | "verify";
 
@@ -38,20 +43,13 @@ function verifyTokenFromHash(): string | null {
   return match ? match[1] : null;
 }
 
-function DeferredSurface({ name }: { name: string }) {
-  return (
-    <EmptyState
-      title={`${name} is on the way`}
-      body={`The ${name.toLowerCase()} surface is planned for a later Focusboard loop. Nothing is lost by waiting — your tasks and projects live in Today, Inbox, and Projects.`}
-    />
-  );
-}
-
 export default function App() {
   const [session, setSession] = useState<Session>({ kind: "loading" });
   const [mainView, setMainView] = useState<MainView>("today");
   const [tasks, setTasks] = useState<Task[] | null>(null);
   const [projects, setProjects] = useState<Project[] | null>(null);
+  const [reminders, setReminders] = useState<Reminder[]>([]);
+  const [focusSessions, setFocusSessions] = useState<FocusSession[]>([]);
   const [listError, setListError] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState("");
   const [quickAddError, setQuickAddError] = useState<string | null>(null);
@@ -121,12 +119,31 @@ export default function App() {
     if (session.kind !== "signedIn") return;
     setListError(null);
     try {
-      const [t, p] = await Promise.all([
+      const [t, p, r, f] = await Promise.all([
         invoke<Task[]>("list_tasks"),
         invoke<Project[]>("list_projects"),
+        invoke<Reminder[]>("list_reminders").catch(() => [] as Reminder[]),
+        invoke<FocusSession[]>("list_focus_sessions").catch(() => [] as FocusSession[]),
       ]);
       setTasks(t);
       setProjects(p);
+      setReminders(r);
+      setFocusSessions(f);
+      // Settings can change the profile; keep the session's user snapshot in
+      // step so Today/Calendar render with the saved timezone immediately.
+      try {
+        const u = await invoke<PublicUser | null>("session_status");
+        if (u) {
+          setSession((prev) =>
+            prev.kind === "signedIn" &&
+            (prev.user.timezone !== u.timezone || prev.user.display_name !== u.display_name)
+              ? { kind: "signedIn", user: u }
+              : prev
+          );
+        }
+      } catch {
+        // Profile sync is best-effort; the lists above are authoritative.
+      }
     } catch (err) {
       const ce = toCommandError(err);
       if (ce.code === "unauthenticated" || ce.code === "session_expired") {
@@ -149,6 +166,8 @@ export default function App() {
     if (!userId) return;
     setTasks(null);
     setProjects(null);
+    setReminders([]);
+    setFocusSessions([]);
     void refreshLists();
     // Depend on the user identity only: refreshLists is stable per session kind.
   }, [userId]);
@@ -214,6 +233,8 @@ export default function App() {
     }
     setTasks(null);
     setProjects(null);
+    setReminders([]);
+    setFocusSessions([]);
     setQuickAdd("");
     setQuickAddError(null);
     setMainView("today");
@@ -319,13 +340,13 @@ export default function App() {
 
   const inboxCount = tasks?.filter((t) => t.status !== "completed").length ?? 0;
 
-  const navItems: { id: MainView; label: string; icon: "today" | "inbox" | "projects" | "calendar" | "focus" | "settings"; badge?: number; deferred?: boolean }[] = [
+  const navItems: { id: MainView; label: string; icon: "today" | "inbox" | "projects" | "calendar" | "focus" | "settings"; badge?: number }[] = [
     { id: "today", label: "Today", icon: "today" },
     { id: "inbox", label: "Inbox", icon: "inbox", badge: inboxCount },
     { id: "projects", label: "Projects", icon: "projects" },
-    { id: "calendar", label: "Calendar", icon: "calendar", deferred: true },
-    { id: "focus", label: "Focus", icon: "focus", deferred: true },
-    { id: "settings", label: "Settings", icon: "settings", deferred: true },
+    { id: "calendar", label: "Calendar", icon: "calendar" },
+    { id: "focus", label: "Focus", icon: "focus" },
+    { id: "settings", label: "Settings", icon: "settings" },
   ];
 
   return (
@@ -342,12 +363,12 @@ export default function App() {
                   type="button"
                   className={`nav-item${mainView === item.id ? " active" : ""}`}
                   aria-current={mainView === item.id ? "page" : undefined}
+                  data-testid={`nav-${item.id}`}
                   onClick={() => setMainView(item.id)}
                 >
                   <Icon name={item.icon} />
                   <span>{item.label}</span>
                   {item.badge ? <span className="badge">{item.badge}</span> : null}
-                  {item.deferred ? <span className="badge soft">soon</span> : null}
                 </button>
               </li>
             ))}
@@ -371,13 +392,14 @@ export default function App() {
             ref={quickAddRef}
             type="text"
             placeholder="Add a task — press Enter to capture it"
+            data-testid="quick-add-input"
             value={quickAdd}
             onChange={(e) => {
               setQuickAdd(e.target.value);
               if (quickAddError) setQuickAddError(null);
             }}
           />
-          <button type="submit" className="button primary" disabled={quickAddBusy}>
+          <button type="submit" className="button primary" data-testid="quick-add-submit" disabled={quickAddBusy}>
             <Icon name="plus" size={15} /> Add task
           </button>
         </form>
@@ -399,6 +421,8 @@ export default function App() {
           <TodayView
             tasks={tasks}
             projects={projects ?? []}
+            focusSessions={focusSessions}
+            timezone={session.user.timezone}
             error={listError}
             onRetry={() => void refreshLists()}
             onChanged={() => void refreshLists()}
@@ -424,9 +448,29 @@ export default function App() {
             onQuickAddFocus={() => quickAddRef.current?.focus()}
           />
         )}
-        {mainView === "calendar" && <DeferredSurface name="Calendar" />}
-        {mainView === "focus" && <DeferredSurface name="Focus" />}
-        {mainView === "settings" && <DeferredSurface name="Settings" />}
+        {mainView === "calendar" && (
+          <CalendarView
+            tasks={tasks}
+            reminders={reminders}
+            timezone={session.user.timezone}
+            error={listError}
+            onRetry={() => void refreshLists()}
+          />
+        )}
+        {mainView === "focus" && (
+          <FocusView
+            tasks={tasks}
+            timezone={session.user.timezone}
+            onChanged={() => void refreshLists()}
+          />
+        )}
+        {mainView === "settings" && (
+          <SettingsView
+            tasks={tasks ?? []}
+            timezone={session.user.timezone}
+            onChanged={() => void refreshLists()}
+          />
+        )}
       </main>
     </div>
   );

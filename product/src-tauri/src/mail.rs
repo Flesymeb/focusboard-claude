@@ -7,7 +7,7 @@ use std::path::PathBuf;
 /// file plus an append-only `outbox.jsonl` so the host replay can consume the
 /// verification message by script. No provider credentials are involved and
 /// message bodies contain no secrets beyond the single-use action link.
-#[derive(Debug, Serialize, Clone)]
+#[derive(Debug, Serialize, Clone, serde::Deserialize)]
 pub struct MailMessage {
     pub id: String,
     pub to: String,
@@ -17,6 +17,7 @@ pub struct MailMessage {
     pub created_at: String,
 }
 
+#[derive(Clone)]
 pub struct MailSink {
     dir: PathBuf,
 }
@@ -54,6 +55,33 @@ pub fn verification_message(to: &str, token: &str, verify_base: &str) -> MailMes
         subject: "Verify your Focusboard email".to_string(),
         body_text: format!(
             "Welcome to Focusboard.\n\nConfirm this email address to activate your account:\n{action_url}\n\nThe link is single-use and expires in 24 hours. If you did not create an account, you can ignore this message."
+        ),
+        action_url,
+        created_at: crate::store::now_rfc3339(),
+    }
+}
+
+/// Reminder email: product identity, task title, due context, and a deep link
+/// that opens the task in the signed-in app. The link carries only the task
+/// id — never a token, credential, or private content beyond the task title.
+pub fn reminder_message(
+    to: &str,
+    task_id: &str,
+    task_title: &str,
+    due_date: Option<&str>,
+    local_due: &str,
+) -> MailMessage {
+    let action_url = format!("focusboard://task?id={task_id}");
+    let due_context = match due_date {
+        Some(date) => format!("Task due {date}. Reminder set for {local_due}."),
+        None => format!("Reminder set for {local_due}."),
+    };
+    MailMessage {
+        id: crate::store::new_id("mail"),
+        to: to.to_string(),
+        subject: format!("Focusboard reminder: {task_title}"),
+        body_text: format!(
+            "Focusboard reminder\n\nTask: {task_title}\n{due_context}\n\nOpen the task in Focusboard:\n{action_url}\n\nManage reminder preferences in Focusboard Settings."
         ),
         action_url,
         created_at: crate::store::now_rfc3339(),

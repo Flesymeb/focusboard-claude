@@ -29,6 +29,43 @@ export interface Task {
   updated_at: string;
 }
 
+export interface Reminder {
+  id: string;
+  task_id: string;
+  user_id: string;
+  scheduled_at: string;
+  timezone: string;
+  channel: string;
+  status: string;
+  provider_message_id: string | null;
+  sent_at: string | null;
+  retry_count: number;
+  dedup_key: string;
+}
+
+export interface FocusPause {
+  paused_at: string;
+  resumed_at: string | null;
+}
+
+export interface FocusSession {
+  id: string;
+  task_id: string | null;
+  task_title: string | null;
+  started_at: string;
+  ended_at: string | null;
+  state: "running" | "paused" | "completed" | "cancelled";
+  pauses: FocusPause[];
+  elapsed_seconds: number;
+}
+
+export interface Settings {
+  email: string;
+  display_name: string;
+  timezone: string;
+  notifications_enabled: boolean;
+}
+
 export interface CommandErrorShape {
   code: string;
   message: string;
@@ -56,4 +93,57 @@ export function todayLocal(): string {
   const m = `${d.getMonth() + 1}`.padStart(2, "0");
   const day = `${d.getDate()}`.padStart(2, "0");
   return `${d.getFullYear()}-${m}-${day}`;
+}
+
+export const COMMON_TIMEZONES = [
+  "UTC",
+  "Asia/Shanghai",
+  "Asia/Hong_Kong",
+  "Asia/Taipei",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Asia/Kolkata",
+  "Asia/Dubai",
+  "Europe/London",
+  "Europe/Berlin",
+  "Europe/Paris",
+  "Europe/Moscow",
+  "America/New_York",
+  "America/Chicago",
+  "America/Denver",
+  "America/Los_Angeles",
+  "Australia/Sydney",
+  "Pacific/Auckland",
+];
+
+/** Formats an absolute instant as local wall-clock time in a named timezone. */
+export function formatInTimezone(instant: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      timeZone: timezone,
+      dateStyle: "medium",
+      timeStyle: "short",
+    }).format(new Date(instant));
+  } catch {
+    return instant;
+  }
+}
+
+/** The YYYY-MM-DD calendar date of an instant in a named timezone. */
+export function dateInTimezone(instant: string, timezone: string): string {
+  try {
+    return new Intl.DateTimeFormat("en-CA", {
+      timeZone: timezone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(new Date(instant));
+  } catch {
+    return instant.slice(0, 10);
+  }
+}
+
+/** Today's YYYY-MM-DD date in a named timezone. */
+export function todayInTimezone(timezone: string): string {
+  return dateInTimezone(new Date().toISOString(), timezone);
 }

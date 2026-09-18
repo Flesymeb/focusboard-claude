@@ -1,5 +1,7 @@
 mod auth;
+mod focus;
 mod mail;
+mod reminders;
 mod store;
 mod tasks;
 
@@ -330,6 +332,190 @@ fn set_task_status(
     })
 }
 
+#[tauri::command]
+fn set_task_reminder(
+    state: tauri::State<AppState>,
+    task_id: String,
+    reminder_time: String,
+    timezone: String,
+) -> Result<reminders::Reminder, CommandError> {
+    require_then(&state, |s, u| {
+        reminders::set_task_reminder(s, u, &task_id, &reminder_time, &timezone)
+    })
+}
+
+#[tauri::command]
+fn list_reminders(
+    state: tauri::State<AppState>,
+) -> Result<Vec<reminders::Reminder>, CommandError> {
+    require_then(&state, |s, u| reminders::list_reminders(s, u))
+}
+
+#[tauri::command]
+fn retry_reminder(
+    state: tauri::State<AppState>,
+    reminder_id: String,
+) -> Result<reminders::Reminder, CommandError> {
+    require_then(&state, |s, u| reminders::retry_reminder(s, u, &reminder_id))
+}
+
+#[derive(Serialize)]
+struct Settings {
+    email: String,
+    display_name: String,
+    timezone: String,
+    notifications_enabled: bool,
+}
+
+#[tauri::command]
+fn get_settings(state: tauri::State<AppState>) -> Result<Settings, CommandError> {
+    require_then(&state, |s, u| {
+        let row: (String, String, i64) = s
+            .conn
+            .query_row(
+                "SELECT email, display_name, notifications_enabled FROM users WHERE id = ?1",
+                [&u.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map_err(|e| CommandError::new("storage_error", format!("Could not load settings: {e}")))?;
+        Ok(Settings {
+            email: row.0,
+            display_name: row.1,
+            timezone: u.timezone.clone(),
+            notifications_enabled: row.2 != 0,
+        })
+    })
+}
+
+#[tauri::command]
+fn update_settings(
+    state: tauri::State<AppState>,
+    display_name: Option<String>,
+    timezone: Option<String>,
+    notifications_enabled: Option<bool>,
+) -> Result<Settings, CommandError> {
+    require_then(&state, |s, u| {
+        if let Some(tz) = timezone.as_deref() {
+            if tz.parse::<chrono_tz::Tz>().is_err() {
+                return Err(CommandError::new(
+                    "invalid_timezone",
+                    "Choose a valid IANA timezone, like Asia/Shanghai.",
+                ));
+            }
+        }
+        let name = display_name
+            .as_ref()
+            .map(|n| n.trim().to_string())
+            .unwrap_or_else(|| String::new());
+        if name.chars().count() > 80 {
+            return Err(CommandError::new(
+                "name_too_long",
+                "Keep display names under 80 characters.",
+            ));
+        }
+        let n = s
+            .conn
+            .execute(
+                "UPDATE users SET
+                    display_name = COALESCE(?1, display_name),
+                    timezone = COALESCE(?2, timezone),
+                    notifications_enabled = COALESCE(?3, notifications_enabled)
+                 WHERE id = ?4",
+                rusqlite::params![
+                    display_name.as_deref().map(|_| name.clone()),
+                    timezone.as_deref(),
+                    notifications_enabled.map(|v| v as i64),
+                    u.id
+                ],
+            )
+            .map_err(|e| CommandError::new("storage_error", format!("Could not save settings: {e}")))?;
+        if n == 0 {
+            return Err(CommandError::new("not_found", "Account not found."));
+        }
+        let row: (String, String, String, i64) = s
+            .conn
+            .query_row(
+                "SELECT email, display_name, timezone, notifications_enabled FROM users WHERE id = ?1",
+                [&u.id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .map_err(|e| CommandError::new("storage_error", format!("Could not load settings: {e}")))?;
+        Ok(Settings {
+            email: row.0,
+            display_name: row.1,
+            timezone: row.2,
+            notifications_enabled: row.3 != 0,
+        })
+    })
+}
+
+#[tauri::command]
+fn start_focus_session(
+    state: tauri::State<AppState>,
+    task_id: String,
+) -> Result<focus::FocusSession, CommandError> {
+    require_then(&state, |s, u| focus::start_session(s, u, &task_id))
+}
+
+#[tauri::command]
+fn pause_focus_session(
+    state: tauri::State<AppState>,
+    session_id: String,
+) -> Result<focus::FocusSession, CommandError> {
+    require_then(&state, |s, u| focus::pause_session(s, u, &session_id))
+}
+
+#[tauri::command]
+fn resume_focus_session(
+    state: tauri::State<AppState>,
+    session_id: String,
+) -> Result<focus::FocusSession, CommandError> {
+    require_then(&state, |s, u| focus::resume_session(s, u, &session_id))
+}
+
+#[tauri::command]
+fn finish_focus_session(
+    state: tauri::State<AppState>,
+    session_id: String,
+) -> Result<focus::FocusSession, CommandError> {
+    require_then(&state, |s, u| focus::finish_session(s, u, &session_id))
+}
+
+#[tauri::command]
+fn cancel_focus_session(
+    state: tauri::State<AppState>,
+    session_id: String,
+) -> Result<focus::FocusSession, CommandError> {
+    require_then(&state, |s, u| focus::cancel_session(s, u, &session_id))
+}
+
+#[tauri::command]
+fn list_focus_sessions(
+    state: tauri::State<AppState>,
+) -> Result<Vec<focus::FocusSession>, CommandError> {
+    require_then(&state, |s, u| focus::list_sessions(s, u))
+}
+
+#[tauri::command]
+fn active_focus_session(
+    state: tauri::State<AppState>,
+) -> Result<Option<focus::FocusSession>, CommandError> {
+    require_then(&state, |s, u| focus::active_session(s, u))
+}
+
+/// Idempotent, restart-safe reminder scheduler. Reminders live in SQLite, so
+/// a pass on every tick covers anything that came due while the app was
+/// closed; the status-guarded claim inside tick() makes repeated passes and
+/// restarts duplicate-free.
+fn spawn_reminder_scheduler(app: tauri::AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if let Some(state) = app.try_state::<AppState>() {
+            let _ = map_result(&state, |s| reminders::tick(s, &state.sink));
+        }
+    });
+}
+
 fn resolve_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
     if let Ok(dir) = std::env::var("FOCUSBOARD_DATA_DIR") {
         if !dir.is_empty() {
@@ -378,6 +564,7 @@ pub fn run() {
             // Cold activation: the link that launched us is handed to the
             // webview when it asks, so no token-dependent frame is missed.
             app.manage(PendingDeepLink(std::sync::Mutex::new(activated_link)));
+            spawn_reminder_scheduler(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -395,7 +582,19 @@ pub fn run() {
             list_tasks,
             assign_task,
             set_task_due,
-            set_task_status
+            set_task_status,
+            set_task_reminder,
+            list_reminders,
+            retry_reminder,
+            get_settings,
+            update_settings,
+            start_focus_session,
+            pause_focus_session,
+            resume_focus_session,
+            finish_focus_session,
+            cancel_focus_session,
+            list_focus_sessions,
+            active_focus_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running Focusboard");
@@ -439,6 +638,113 @@ mod tests {
         assert!(!token.is_empty());
         assert!(!raw.contains("password"), "mail must not contain passwords");
         token
+    }
+
+    /// White-box self-drive of the release-critical PRD section 3 path at the
+    /// domain/IPC layer: register, mail-sink verify, sign in, project, task
+    /// with reminder and timezone, focus session, reminder delivery, task
+    /// completion, then sign-out/sign-in with durable state. The host replay
+    /// drives the same steps through the live UI.
+    #[test]
+    fn golden_path_section3_self_drive() {
+        let dir = temp_dir("golden-path");
+        let sink = MailSink::new(&dir);
+
+        // Steps 1-3: register and consume the mail-sink verification link.
+        let store = open_store(&dir);
+        auth::register(
+            &store,
+            &sink,
+            VERIFY_BASE,
+            "path@example.com",
+            "tulip-garnet-9",
+            "Path",
+        )
+        .unwrap();
+        let token = read_sink_token(&dir, "path@example.com");
+        auth::verify_email_token(&store, &token).unwrap();
+
+        // Step 4: sign in.
+        let user = auth::sign_in(&store, "path@example.com", "tulip-garnet-9").unwrap();
+
+        // Step 5: project.
+        let project = tasks::create_project(&store, &user, "Launch plan").unwrap();
+
+        // Step 6: task with due date and reminder time + timezone.
+        let today = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let task = tasks::create_task(
+            &store,
+            &user,
+            "Prepare first demo",
+            Some(&project.id),
+            Some(&today),
+        )
+        .unwrap();
+        let due_local = (chrono::Utc::now() - chrono::Duration::seconds(2))
+            .with_timezone(&chrono_tz::UTC)
+            .format("%Y-%m-%dT%H:%M")
+            .to_string();
+        let reminder =
+            reminders::set_task_reminder(&store, &user, &task.id, &due_local, "Asia/Shanghai")
+                .unwrap();
+
+        // Step 7: the task is visible in the user's lists with its date.
+        let listed = tasks::list_tasks(&store, &user).unwrap();
+        assert!(listed.iter().any(|t| t.id == task.id && t.due_date == Some(today.clone())));
+
+        // Step 8: focus session start -> pause -> resume -> finish.
+        let session = focus::start_session(&store, &user, &task.id).unwrap();
+        assert_eq!(session.task_title.as_deref(), Some("Prepare first demo"));
+        let paused = focus::pause_session(&store, &user, &session.id).unwrap();
+        assert_eq!(paused.state, focus::STATE_PAUSED);
+        let resumed = focus::resume_session(&store, &user, &session.id).unwrap();
+        assert_eq!(resumed.state, focus::STATE_RUNNING);
+        let finished = focus::finish_session(&store, &user, &session.id).unwrap();
+        assert_eq!(finished.state, focus::STATE_COMPLETED);
+
+        // Step 10: the reminder fires at its instant, exactly one email.
+        assert_eq!(reminders::tick(&store, &sink).unwrap(), 1);
+        assert_eq!(reminders::tick(&store, &sink).unwrap(), 0);
+        let delivered = reminders::get_reminder(&store, &user, &reminder.id).unwrap();
+        assert_eq!(delivered.status, "sent");
+
+        // Steps 8-9: complete the task exactly once; the summary state updates.
+        let done = tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
+        assert_eq!(done.status, "completed");
+        assert!(done.completed_at.is_some());
+        let completed_again = tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
+        assert_eq!(completed_again.completed_at, done.completed_at);
+
+        // Step 11: sign out, sign back in, state persists.
+        auth::sign_out(&store).unwrap();
+        let err = auth::current_user(&store).unwrap_err();
+        assert_eq!(err.code, "unauthenticated");
+        let again = auth::sign_in(&store, "path@example.com", "tulip-garnet-9").unwrap();
+        assert_eq!(again.id, user.id);
+        let persisted = tasks::list_tasks(&store, &again).unwrap();
+        assert_eq!(persisted.len(), 1);
+        assert_eq!(persisted[0].status, "completed");
+        let projects = tasks::list_projects(&store, &again).unwrap();
+        assert_eq!(projects.len(), 1);
+        let sessions = focus::list_sessions(&store, &again).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].state, focus::STATE_COMPLETED);
+        let reminders_after = reminders::list_reminders(&store, &again).unwrap();
+        assert_eq!(reminders_after.len(), 1);
+        assert_eq!(reminders_after[0].status, "sent");
+
+        // Reminder mail content: identity, title, due context, safe link.
+        let raw = std::fs::read_to_string(
+            dir.join("mail-sink")
+                .join(format!("{}.json", delivered.provider_message_id.unwrap())),
+        )
+        .unwrap();
+        assert!(raw.contains("Prepare first demo"));
+        assert!(raw.contains("Focusboard"));
+        assert!(raw.contains("focusboard://task?id="));
+        assert!(!raw.contains("token="));
+        assert!(!raw.contains("password"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

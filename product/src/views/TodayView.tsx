@@ -1,10 +1,19 @@
-import { Project, Task, todayLocal } from "../api";
+import { FocusSession, Project, Task, dateInTimezone, todayInTimezone } from "../api";
 import { EmptyState, ErrorState, Loading } from "../ui";
 import { TaskRow } from "./TaskRow";
+
+function fmtMinutes(seconds: number): string {
+  const m = Math.round(seconds / 60);
+  if (m < 1) return "under a minute";
+  if (m === 1) return "1 minute";
+  return `${m} minutes`;
+}
 
 export function TodayView(props: {
   tasks: Task[] | null;
   projects: Project[];
+  focusSessions: FocusSession[];
+  timezone: string;
   error: string | null;
   onRetry: () => void;
   onChanged: () => void;
@@ -16,7 +25,7 @@ export function TodayView(props: {
   if (tasks === null) {
     return <Loading label="Planning your day" />;
   }
-  const today = todayLocal();
+  const today = todayInTimezone(props.timezone);
   const dueToday = tasks.filter(
     (t) => t.status !== "completed" && t.due_date === today
   );
@@ -24,10 +33,24 @@ export function TodayView(props: {
     (t) => t.status !== "completed" && t.due_date !== null && t.due_date < today
   );
   const completedToday = tasks.filter(
-    (t) => t.status === "completed" && t.completed_at?.slice(0, 10) === today
+    (t) =>
+      t.status === "completed" &&
+      t.completed_at !== null &&
+      dateInTimezone(t.completed_at, props.timezone) === today
   );
+  const focusToday = props.focusSessions.filter(
+    (s) => dateInTimezone(s.started_at, props.timezone) === today
+  );
+  const focusSeconds = focusToday
+    .filter((s) => s.state === "completed")
+    .reduce((sum, s) => sum + s.elapsed_seconds, 0);
 
-  if (dueToday.length === 0 && overdue.length === 0 && completedToday.length === 0) {
+  if (
+    dueToday.length === 0 &&
+    overdue.length === 0 &&
+    completedToday.length === 0 &&
+    focusToday.length === 0
+  ) {
     return (
       <EmptyState
         title="Nothing scheduled for today"
@@ -59,25 +82,45 @@ export function TodayView(props: {
           ))}
         </ul>
       )}
-      {completedToday.length > 0 && (
+      {focusToday.length > 0 && (
+        <>
+          <h2 className="section-title">Focus work today</h2>
+          <ul className="focus-day-list">
+            {focusToday.map((s) => (
+              <li key={s.id} className="focus-day-row" data-focus-state={s.state}>
+                <span className="focus-day-task">{s.task_title ?? "Untitled task"}</span>
+                <span className={`session-state state-${s.state}`}>{s.state}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {(completedToday.length > 0 || focusSeconds > 0) && (
         <>
           <h2 className="section-title">Done today</h2>
           <p className="section-note">
-            {completedToday.length === 1
-              ? "1 task completed."
-              : `${completedToday.length} tasks completed.`}
+            {completedToday.length === 0
+              ? "No tasks completed yet."
+              : completedToday.length === 1
+                ? "1 task completed."
+                : `${completedToday.length} tasks completed.`}
+            {focusSeconds > 0
+              ? ` ${fmtMinutes(focusSeconds)} of focused work recorded.`
+              : ""}
           </p>
-          <ul className="task-list muted">
-            {completedToday.map((t) => (
-              <TaskRow
-                key={t.id}
-                task={t}
-                projects={props.projects}
-                onChanged={props.onChanged}
-                showDue={false}
-              />
-            ))}
-          </ul>
+          {completedToday.length > 0 && (
+            <ul className="task-list muted">
+              {completedToday.map((t) => (
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  projects={props.projects}
+                  onChanged={props.onChanged}
+                  showDue={false}
+                />
+              ))}
+            </ul>
+          )}
         </>
       )}
     </div>

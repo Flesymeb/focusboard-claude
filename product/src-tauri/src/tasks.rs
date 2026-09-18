@@ -227,6 +227,11 @@ pub fn create_task(
 }
 
 fn get_task(store: &Store, user: &PublicUser, task_id: &str) -> CommandResult<Task> {
+    get_task_owned(store, user, task_id)
+}
+
+/// Ownership-checked task lookup shared with the reminder and focus modules.
+pub fn get_task_owned(store: &Store, user: &PublicUser, task_id: &str) -> CommandResult<Task> {
     store
         .conn
         .query_row(
@@ -333,13 +338,22 @@ pub fn update_task(
             return Err(CommandError::new("invalid_status", "Unknown task status."));
         }
         let completed_at = if s == "completed" { Some(now.clone()) } else { None };
+        // Re-completing an already completed task keeps the original
+        // completion timestamp: completion is recorded exactly once.
         store
             .conn
             .execute(
-                "UPDATE tasks SET status = ?1, completed_at = ?2, updated_at = ?3 WHERE id = ?4 AND user_id = ?5",
+                "UPDATE tasks SET status = ?1,
+                    completed_at = CASE WHEN status = ?1 THEN completed_at ELSE ?2 END,
+                    updated_at = ?3
+                 WHERE id = ?4 AND user_id = ?5",
                 rusqlite::params![s, completed_at, now, task_id, user.id],
             )
             .map_err(|e| CommandError::new("storage_error", format!("Could not update task: {e}")))?;
+        if s == "completed" {
+            // PRD section 7: completing a task skips its future reminders.
+            crate::reminders::cancel_pending_for_task(store, user, task_id, "skipped")?;
+        }
     }
     get_task(store, user, task_id)
 }
