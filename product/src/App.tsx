@@ -375,10 +375,14 @@ export default function App() {
     { id: "settings", label: "Settings", icon: "settings" },
   ];
 
+  // The probe must stay the stable first child of every session branch: a
+  // root-element type change here remounts it mid-drive and erases the
+  // terminal state the host replay reads.
   return (
-    <div className="app-shell">
+    <>
       {probe}
-      <aside className="sidebar">
+      <div className="app-shell">
+        <aside className="sidebar">
         <p className="brand">
           <Icon name="projects" size={20} /> Focusboard
         </p>
@@ -499,6 +503,7 @@ export default function App() {
           />
         )}
       </main>
-    </div>
+      </div>
+    </>
   );
 }
