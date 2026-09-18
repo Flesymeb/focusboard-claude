@@ -62,7 +62,7 @@ pub fn golden_path_drive_start(
     Ok(DriveStarted { started: true })
 }
 
-fn with_drive<T, F>(drive: &State<GoldenPathDrive>, f: F) -> Result<T, CommandError>
+fn with_drive<T, F>(drive: &GoldenPathDrive, f: F) -> Result<T, CommandError>
 where
     F: FnOnce(&DriveCredentials) -> CommandResult<T>,
 {
@@ -217,6 +217,17 @@ mod tests {
             auth::validate_password(&creds.password).unwrap();
             assert!(!creds.task_title.is_empty());
         }
+    }
+
+    /// Opt-in gate: a freshly managed drive holds no credentials, so every
+    /// account-touching step refuses until golden_path_drive_start ran
+    /// explicitly. Normal startup never creates accounts or consumes tokens.
+    #[test]
+    fn drive_refuses_every_step_until_explicitly_started() {
+        let drive = GoldenPathDrive::new();
+        let err = with_drive(&drive, |c| Ok(c.email.clone())).unwrap_err();
+        assert_eq!(err.code, "drive_not_started");
+        assert!(drive.0.lock().unwrap().is_none());
     }
 
     #[test]

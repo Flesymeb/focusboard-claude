@@ -305,20 +305,27 @@ async function runDrive(
 
 function summaryText(report: ProbeReport): string {
   const total = DRIVE_STEPS.length;
-  if (report.phase === "idle") return "IDLE";
-  if (report.phase === "running") return `RUNNING ${report.passed} of ${total}`;
-  if (report.phase === "pass") return `PASS ${total} of ${total}`;
-  return `FAIL ${report.passed} of ${total} at ${report.step}: ${report.reason}`;
+  // Every self-drive outcome is advisory only: the journey verdict belongs to
+  // the host's external WebDriver lane, never to this in-process drive.
+  if (report.phase === "idle") return "ADVISORY self-drive IDLE (untrusted)";
+  if (report.phase === "running")
+    return `ADVISORY self-drive RUNNING ${report.passed} of ${total} (untrusted)`;
+  if (report.phase === "pass")
+    return `ADVISORY self-drive PASS ${total} of ${total} (untrusted; not a journey verdict)`;
+  return `ADVISORY self-drive FAIL ${report.passed} of ${total} at ${report.step}: ${report.reason} (untrusted)`;
 }
 
 /**
- * Product-owned measurement gate for the PRD section-3 first-run path. The
- * drive starts ONLY from the explicit hidden #golden-path-trigger element —
- * never automatically, so it can never mutate app/auth state before the
- * host replay finishes its anonymous-form assertions. State is honest: pass
- * only after every step succeeded against live IPC and durable storage,
- * otherwise the failing step and its reason code. No password, token, or
- * email content ever reaches this element or its payloads.
+ * Advisory in-process diagnostic for the PRD section-3 path. This renderer
+ * self-drive is never a journey verdict: every summary it reports is labeled
+ * advisory and untrusted, and only the host's external WebDriver lane may
+ * conclude the journey. The drive starts ONLY from the explicit hidden
+ * #golden-path-trigger element — never automatically, so it can never mutate
+ * app/auth state before the host replay finishes its anonymous-form
+ * assertions. State is honest: pass only after every step succeeded against
+ * live IPC and durable storage, otherwise the failing step and its reason
+ * code. No password, token, or email content ever reaches this element or
+ * its payloads.
  */
 export function GoldenPathProbe(props: {
   onAuthChange: (user: PublicUser | null) => void;
@@ -395,6 +402,8 @@ export function GoldenPathProbe(props: {
       data-goldenpath-total={DRIVE_STEPS.length}
       data-goldenpath-elapsed={report.elapsedSeconds}
       data-goldenpath-source="renderer-self-drive-ipc"
+      data-goldenpath-authority="advisory-self-drive-untrusted"
+      data-goldenpath-verdict="none"
       data-deeplink-cold-delivered={deeplink.cold_delivered}
       data-deeplink-warm-forwarded={deeplink.warm_forwarded}
       data-deeplink-pending={deeplink.pending_now ? "true" : "false"}
