@@ -887,6 +887,13 @@ mod tests {
         assert_eq!(reminders_after.len(), 1);
         assert_eq!(reminders_after[0].status, "sent");
 
+        // Terminal contract: the golden path ends with the account still
+        // signed in — the shell that remains is the signed-in Today surface,
+        // not an anonymous restore-shell. No terminal sign-out runs.
+        let terminal = auth::current_user(&store).unwrap();
+        assert_eq!(terminal.id, user.id);
+        assert_eq!(terminal.email, "path@example.com");
+
         // Reminder mail content: identity, title, due context, safe link.
         let raw = std::fs::read_to_string(
             dir.join("mail-sink")

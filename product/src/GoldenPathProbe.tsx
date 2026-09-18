@@ -44,7 +44,7 @@ export const DRIVE_STEPS = [
   "sign_out",
   "sign_in_again",
   "persistence",
-  "restore_shell",
+  "terminal_today",
 ] as const;
 
 const VIEW_SEQUENCE: DriveView[] = [
@@ -276,10 +276,11 @@ async function runDrive(
     const reminders = await call(stepName, invoke<Reminder[]>("list_reminders"));
     if (reminders.length !== 1 || reminders[0].status !== "sent") fail("persistence_reminders");
 
-    // Restore the anonymous shell so the surface the replay inspects after
-    // the drive matches an ordinary signed-out launch.
-    await call(stepName, invoke("sign_out"));
-    onAuthChange(null);
+    // Terminal contract: the drive ends signed in on Today so the six
+    // section-8 surfaces stay reachable through the primary nav for the
+    // host's post-drive per-surface capture. No terminal sign-out runs.
+    visitView("today");
+    await waitForHeading("today");
     await next();
 
     report({

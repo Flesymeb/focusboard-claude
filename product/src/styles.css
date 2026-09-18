@@ -1091,18 +1091,20 @@ select:hover {
   color: var(--ink-faint);
 }
 
-/* Golden-path probe: mounted in every session state, visually hidden at all
-   viewports, yet hit-testable so a WebDriver pointer can reach the trigger. */
+/* Golden-path probe: mounted in every session state, invisible at all
+   viewports (every child is fully transparent — opacity must stay nonzero
+   because the WebDriver displayedness atom treats opacity:0 as hidden), yet
+   reliably hit-testable so a standard element click reaches the trigger:
+   a 24x24 target whose center sits 12px inside the window corner. */
 .golden-path-probe {
   position: fixed;
   right: 0;
   bottom: 0;
-  width: 6px;
-  height: 6px;
+  width: 24px;
+  height: 24px;
   margin: 0;
   padding: 0;
   border: 0;
-  opacity: 0;
   overflow: hidden;
   pointer-events: none;
 }
