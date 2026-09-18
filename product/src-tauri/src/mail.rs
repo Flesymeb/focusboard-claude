@@ -33,7 +33,8 @@ impl MailSink {
         fs::create_dir_all(&self.dir).map_err(|e| format!("mail sink unavailable: {e}"))?;
         let file_name = format!("{}.json", message.id);
         let json = serde_json::to_string_pretty(message).map_err(|e| e.to_string())?;
-        fs::write(self.dir.join(file_name), &json).map_err(|e| format!("mail sink write failed: {e}"))?;
+        fs::write(self.dir.join(file_name), &json)
+            .map_err(|e| format!("mail sink write failed: {e}"))?;
         let mut line = serde_json::to_string(message).map_err(|e| e.to_string())?;
         line.push('\n');
         let mut out = fs::OpenOptions::new()

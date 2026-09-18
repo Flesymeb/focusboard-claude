@@ -48,10 +48,7 @@ fn validate_due_date(due: &str) -> Result<String, CommandError> {
     chrono::NaiveDate::parse_from_str(due, "%Y-%m-%d")
         .map(|_| due.to_string())
         .map_err(|_| {
-            CommandError::new(
-                "invalid_due_date",
-                "Use a valid date in YYYY-MM-DD format.",
-            )
+            CommandError::new("invalid_due_date", "Use a valid date in YYYY-MM-DD format.")
         })
 }
 
@@ -68,7 +65,9 @@ pub fn create_project(store: &Store, user: &PublicUser, name: &str) -> CommandRe
             [&user.id],
             |r| r.get(0),
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not count projects: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not count projects: {e}"))
+        })?;
     let id = new_id("prj");
     let now = now_rfc3339();
     store
@@ -78,7 +77,9 @@ pub fn create_project(store: &Store, user: &PublicUser, name: &str) -> CommandRe
              VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?6)",
             rusqlite::params![id, user.id, name, next_accent(count as usize), count, now],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not create project: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not create project: {e}"))
+        })?;
     Ok(Project {
         id,
         name,
@@ -104,9 +105,14 @@ pub fn rename_project(
              WHERE id = ?3 AND user_id = ?4 AND archived = 0",
             rusqlite::params![name, now_rfc3339(), project_id, user.id],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not rename project: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not rename project: {e}"))
+        })?;
     if n == 0 {
-        return Err(CommandError::new("not_found", "That project no longer exists."));
+        return Err(CommandError::new(
+            "not_found",
+            "That project no longer exists.",
+        ));
     }
     get_project(store, user, project_id)
 }
@@ -188,7 +194,10 @@ fn assert_project_owned(store: &Store, user: &PublicUser, project_id: &str) -> C
         .optional()
         .map_err(|e| CommandError::new("storage_error", format!("Project lookup failed: {e}")))?;
     if owned.is_none() {
-        return Err(CommandError::new("not_found", "That project no longer exists."));
+        return Err(CommandError::new(
+            "not_found",
+            "That project no longer exists.",
+        ));
     }
     Ok(())
 }
@@ -322,7 +331,9 @@ pub fn update_task(
                 "UPDATE tasks SET project_id = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
                 rusqlite::params![value, now, task_id, user.id],
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not assign task: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not assign task: {e}"))
+            })?;
     }
     if let Some(d) = due {
         store
@@ -331,13 +342,19 @@ pub fn update_task(
                 "UPDATE tasks SET due_date = ?1, updated_at = ?2 WHERE id = ?3 AND user_id = ?4",
                 rusqlite::params![d, now, task_id, user.id],
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not schedule task: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not schedule task: {e}"))
+            })?;
     }
     if let Some(s) = status {
         if s != "open" && s != "completed" {
             return Err(CommandError::new("invalid_status", "Unknown task status."));
         }
-        let completed_at = if s == "completed" { Some(now.clone()) } else { None };
+        let completed_at = if s == "completed" {
+            Some(now.clone())
+        } else {
+            None
+        };
         // Re-completing an already completed task keeps the original
         // completion timestamp: completion is recorded exactly once.
         store
@@ -349,7 +366,9 @@ pub fn update_task(
                  WHERE id = ?4 AND user_id = ?5",
                 rusqlite::params![s, completed_at, now, task_id, user.id],
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not update task: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not update task: {e}"))
+            })?;
         if s == "completed" {
             // PRD section 7: completing a task skips its future reminders.
             crate::reminders::cancel_pending_for_task(store, user, task_id, "skipped")?;

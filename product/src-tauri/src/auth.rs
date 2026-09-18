@@ -48,7 +48,11 @@ fn hash_password(password: &str) -> CommandResult<String> {
 
 fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
-        .map(|parsed| Argon2::default().verify_password(password.as_bytes(), &parsed).is_ok())
+        .map(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok()
+        })
         .unwrap_or(false)
 }
 
@@ -153,10 +157,8 @@ fn create_email_token(store: &Store, user_id: &str, purpose: &str) -> CommandRes
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let expires_at = (chrono::Utc::now() + Duration::hours(VERIFY_TTL_HOURS)).to_rfc3339_opts(
-        chrono::SecondsFormat::Millis,
-        true,
-    );
+    let expires_at = (chrono::Utc::now() + Duration::hours(VERIFY_TTL_HOURS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     store
         .conn
         .execute(
@@ -170,7 +172,12 @@ fn create_email_token(store: &Store, user_id: &str, purpose: &str) -> CommandRes
                 expires_at
             ],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not create verification token: {e}")))?;
+        .map_err(|e| {
+            CommandError::new(
+                "storage_error",
+                format!("Could not create verification token: {e}"),
+            )
+        })?;
     Ok(token)
 }
 
@@ -206,12 +213,19 @@ fn record_attempt(store: &Store, email: &str, success: bool) -> CommandResult<()
             "INSERT INTO auth_attempts(email, attempted_at, success) VALUES(?1, ?2, ?3)",
             rusqlite::params![email, now_rfc3339(), success as i64],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not record attempt: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not record attempt: {e}"))
+        })?;
     if success {
         store
             .conn
-            .execute("DELETE FROM auth_attempts WHERE email = ?1 COLLATE NOCASE", [email])
-            .map_err(|e| CommandError::new("storage_error", format!("Could not clear attempts: {e}")))?;
+            .execute(
+                "DELETE FROM auth_attempts WHERE email = ?1 COLLATE NOCASE",
+                [email],
+            )
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not clear attempts: {e}"))
+            })?;
     }
     Ok(())
 }
@@ -221,18 +235,24 @@ fn create_session(store: &Store, user_id: &str) -> CommandResult<String> {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let expires_at = (chrono::Utc::now() + Duration::days(SESSION_TTL_DAYS)).to_rfc3339_opts(
-        chrono::SecondsFormat::Millis,
-        true,
-    );
+    let expires_at = (chrono::Utc::now() + Duration::days(SESSION_TTL_DAYS))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     store
         .conn
         .execute(
             "INSERT INTO sessions(id, user_id, token_hash, expires_at, revoked, device, created_at)
              VALUES(?1, ?2, ?3, ?4, 0, 'desktop', ?5)",
-            rusqlite::params![new_id("ses"), user_id, hash_token(&token), expires_at, now_rfc3339()],
+            rusqlite::params![
+                new_id("ses"),
+                user_id,
+                hash_token(&token),
+                expires_at,
+                now_rfc3339()
+            ],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not create session: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not create session: {e}"))
+        })?;
     store.kv_set(CURRENT_SESSION_KEY, &hash_token(&token))?;
     Ok(token)
 }
@@ -254,23 +274,32 @@ pub fn current_user(store: &Store) -> CommandResult<PublicUser> {
         )
         .optional()
         .map_err(|e| CommandError::new("storage_error", format!("Session lookup failed: {e}")))?;
-    let (user_id, expires_at, revoked) = row
-        .ok_or_else(|| CommandError::new("unauthenticated", "Sign in to continue."))?;
+    let (user_id, expires_at, revoked) =
+        row.ok_or_else(|| CommandError::new("unauthenticated", "Sign in to continue."))?;
     if revoked == 1 {
         let _ = store.kv_delete(CURRENT_SESSION_KEY);
-        return Err(CommandError::new("unauthenticated", "Your session has ended. Sign in to continue."));
+        return Err(CommandError::new(
+            "unauthenticated",
+            "Your session has ended. Sign in to continue.",
+        ));
     }
     let expires = chrono::DateTime::parse_from_rfc3339(&expires_at)
         .map_err(|_| CommandError::new("internal_error", "Stored session expiry is malformed."))?;
     if chrono::Utc::now() >= expires {
         let _ = store.kv_delete(CURRENT_SESSION_KEY);
-        return Err(CommandError::new("session_expired", "Your session expired. Sign in to continue."));
+        return Err(CommandError::new(
+            "session_expired",
+            "Your session expired. Sign in to continue.",
+        ));
     }
     let user = get_user_by_id(store, &user_id)
         .ok_or_else(|| CommandError::new("unauthenticated", "Sign in to continue."))?;
     if user.status == "disabled" {
         let _ = store.kv_delete(CURRENT_SESSION_KEY);
-        return Err(CommandError::new("account_disabled", "This account is disabled."));
+        return Err(CommandError::new(
+            "account_disabled",
+            "This account is disabled.",
+        ));
     }
     Ok(public_user(&user))
 }
@@ -306,9 +335,17 @@ pub fn register(
         .execute(
             "INSERT INTO users(id, email, password_hash, display_name, status, created_at)
              VALUES(?1, ?2, ?3, ?4, 'unverified', ?5)",
-            rusqlite::params![new_id("usr"), email, password_hash, display_name.trim(), now_rfc3339()],
+            rusqlite::params![
+                new_id("usr"),
+                email,
+                password_hash,
+                display_name.trim(),
+                now_rfc3339()
+            ],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not create account: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not create account: {e}"))
+        })?;
     let user = get_user_by_email(store, &email)
         .ok_or_else(|| CommandError::new("internal_error", "Account vanished after creation."))?;
     send_verification_email(store, sink, verify_base, &user.id, &user.email)?;
@@ -360,7 +397,9 @@ pub fn verify_email_token(store: &Store, token: &str) -> CommandResult<PublicUse
             "UPDATE users SET status = 'active' WHERE id = ?1 AND status = 'unverified'",
             [&user_id],
         )
-        .map_err(|e| CommandError::new("storage_error", format!("Could not activate account: {e}")))?;
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not activate account: {e}"))
+        })?;
     let user = get_user_by_id(store, &user_id)
         .ok_or_else(|| CommandError::new("internal_error", "Account not found."))?;
     Ok(public_user(&user))
@@ -417,7 +456,9 @@ pub fn sign_out(store: &Store) -> CommandResult<()> {
                 "UPDATE sessions SET revoked = 1 WHERE token_hash = ?1",
                 [&token_hash],
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not end session: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not end session: {e}"))
+            })?;
     }
     store.kv_delete(CURRENT_SESSION_KEY)?;
     Ok(())

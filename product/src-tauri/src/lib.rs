@@ -34,8 +34,15 @@ fn token_from_link(url: &str) -> Option<String> {
     let rest = url.trim().strip_prefix("focusboard://")?;
     let idx = rest.find("token=")?;
     let rest = &rest[idx + "token=".len()..];
-    let token: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric()).collect();
-    if token.is_empty() { None } else { Some(token) }
+    let token: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric())
+        .collect();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token)
+    }
 }
 
 fn deep_link_from_args() -> Option<String> {
@@ -58,7 +65,11 @@ fn preflight_data_dir() -> Option<PathBuf> {
         .ok()
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
-        .or_else(|| std::env::var("HOME").ok().map(|h| PathBuf::from(h).join(".local/share")))
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".local/share"))
+        })
         .map(|d| d.join("app.focusboard.desktop"))
 }
 
@@ -104,11 +115,20 @@ fn desktop_exec_arg(value: &str) -> String {
     }
     if value.bytes().all(|b| {
         b.is_ascii_alphanumeric()
-            || matches!(b, b'/' | b'.' | b'_' | b'-' | b':' | b'=' | b'@' | b'+' | b',')
+            || matches!(
+                b,
+                b'/' | b'.' | b'_' | b'-' | b':' | b'=' | b'@' | b'+' | b','
+            )
     }) {
         value.to_string()
     } else {
-        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"").replace('$', "\\$"))
+        format!(
+            "\"{}\"",
+            value
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('$', "\\$")
+        )
     }
 }
 
@@ -117,8 +137,12 @@ fn desktop_exec_arg(value: &str) -> String {
 /// the session's data dir, so an externally launched activation lands in the
 /// same database. Best effort: failures never block startup.
 fn register_scheme() {
-    let Ok(exe) = std::env::current_exe() else { return };
-    let Ok(home) = std::env::var("HOME") else { return };
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let Ok(home) = std::env::var("HOME") else {
+        return;
+    };
     let apps = PathBuf::from(home).join(".local/share/applications");
     if std::fs::create_dir_all(&apps).is_err() {
         return;
@@ -126,7 +150,10 @@ fn register_scheme() {
     let mut exec = String::new();
     if let Ok(dir) = std::env::var("FOCUSBOARD_DATA_DIR") {
         if !dir.is_empty() {
-            exec.push_str(&format!("env FOCUSBOARD_DATA_DIR={} ", desktop_exec_arg(&dir)));
+            exec.push_str(&format!(
+                "env FOCUSBOARD_DATA_DIR={} ",
+                desktop_exec_arg(&dir)
+            ));
         }
     }
     exec.push_str(&desktop_exec_arg(&exe.display().to_string()));
@@ -138,7 +165,11 @@ fn register_scheme() {
         return;
     }
     let _ = std::process::Command::new("xdg-mime")
-        .args(["default", "focusboard.desktop", "x-scheme-handler/focusboard"])
+        .args([
+            "default",
+            "focusboard.desktop",
+            "x-scheme-handler/focusboard",
+        ])
         .status();
 }
 
@@ -204,7 +235,14 @@ fn register(
     display_name: String,
 ) -> Result<RegisterOutcome, CommandError> {
     let status = map_result(&state, |s| {
-        auth::register(s, &state.sink, &state.verify_base, &email, &password, &display_name)
+        auth::register(
+            s,
+            &state.sink,
+            &state.verify_base,
+            &email,
+            &password,
+            &display_name,
+        )
     })?;
     Ok(RegisterOutcome {
         status,
@@ -213,7 +251,10 @@ fn register(
 }
 
 #[tauri::command]
-fn verify_email(state: tauri::State<AppState>, token: String) -> Result<auth::PublicUser, CommandError> {
+fn verify_email(
+    state: tauri::State<AppState>,
+    token: String,
+) -> Result<auth::PublicUser, CommandError> {
     map_result(&state, |s| auth::verify_email_token(s, &token))
 }
 
@@ -233,11 +274,11 @@ fn sign_out(state: tauri::State<AppState>) -> Result<(), CommandError> {
 
 #[tauri::command]
 fn take_deep_link(state: tauri::State<PendingDeepLink>) -> Option<String> {
-    state.0.lock().ok().and_then(|mut pending| {
-        pending
-            .take()
-            .filter(|url| token_from_link(url).is_some())
-    })
+    state
+        .0
+        .lock()
+        .ok()
+        .and_then(|mut pending| pending.take().filter(|url| token_from_link(url).is_some()))
 }
 
 #[tauri::command]
@@ -264,7 +305,10 @@ fn request_verification_email(
 }
 
 #[tauri::command]
-fn create_project(state: tauri::State<AppState>, name: String) -> Result<tasks::Project, CommandError> {
+fn create_project(
+    state: tauri::State<AppState>,
+    name: String,
+) -> Result<tasks::Project, CommandError> {
     require_then(&state, |s, u| tasks::create_project(s, u, &name))
 }
 
@@ -274,7 +318,9 @@ fn rename_project(
     project_id: String,
     name: String,
 ) -> Result<tasks::Project, CommandError> {
-    require_then(&state, |s, u| tasks::rename_project(s, u, &project_id, &name))
+    require_then(&state, |s, u| {
+        tasks::rename_project(s, u, &project_id, &name)
+    })
 }
 
 #[tauri::command]
@@ -345,9 +391,7 @@ fn set_task_reminder(
 }
 
 #[tauri::command]
-fn list_reminders(
-    state: tauri::State<AppState>,
-) -> Result<Vec<reminders::Reminder>, CommandError> {
+fn list_reminders(state: tauri::State<AppState>) -> Result<Vec<reminders::Reminder>, CommandError> {
     require_then(&state, |s, u| reminders::list_reminders(s, u))
 }
 
@@ -377,7 +421,9 @@ fn get_settings(state: tauri::State<AppState>) -> Result<Settings, CommandError>
                 [&u.id],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not load settings: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not load settings: {e}"))
+            })?;
         Ok(Settings {
             email: row.0,
             display_name: row.1,
@@ -428,7 +474,9 @@ fn update_settings(
                     u.id
                 ],
             )
-            .map_err(|e| CommandError::new("storage_error", format!("Could not save settings: {e}")))?;
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not save settings: {e}"))
+            })?;
         if n == 0 {
             return Err(CommandError::new("not_found", "Account not found."));
         }
@@ -520,8 +568,9 @@ fn resolve_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
     if let Ok(dir) = std::env::var("FOCUSBOARD_DATA_DIR") {
         if !dir.is_empty() {
             let path = PathBuf::from(dir);
-            std::fs::create_dir_all(&path)
-                .map_err(|e| CommandError::new("storage_error", format!("Data directory unavailable: {e}")))?;
+            std::fs::create_dir_all(&path).map_err(|e| {
+                CommandError::new("storage_error", format!("Data directory unavailable: {e}"))
+            })?;
             return Ok(path);
         }
     }
@@ -529,8 +578,9 @@ fn resolve_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, CommandError> {
         .path()
         .app_data_dir()
         .map_err(|_| CommandError::new("storage_error", "Data directory could not be resolved."))?;
-    std::fs::create_dir_all(&dir)
-        .map_err(|e| CommandError::new("storage_error", format!("Data directory unavailable: {e}")))?;
+    std::fs::create_dir_all(&dir).map_err(|e| {
+        CommandError::new("storage_error", format!("Data directory unavailable: {e}"))
+    })?;
     Ok(dir)
 }
 
@@ -552,7 +602,8 @@ pub fn run() {
         .setup(move |app| {
             let data_dir = resolve_data_dir(app.handle()).map_err(|e| e.message)?;
             let db_path = data_dir.join("focusboard.sqlite3");
-            let store = Store::open(&db_path).map_err(|e| format!("Could not open database: {e}"))?;
+            let store =
+                Store::open(&db_path).map_err(|e| format!("Could not open database: {e}"))?;
             let sink = MailSink::new(&data_dir);
             app.manage(AppState {
                 store: std::sync::Mutex::new(store),
@@ -606,10 +657,8 @@ mod tests {
     use crate::store::Store;
 
     fn temp_dir(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "focusboard-test-{name}-{}",
-            store::new_id("t")
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("focusboard-test-{name}-{}", store::new_id("t")));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }
@@ -618,7 +667,7 @@ mod tests {
         Store::open(&dir.join("focusboard.sqlite3")).unwrap()
     }
 
-    fn read_sink_token(dir: &PathBuf, to: &str) -> String {
+    fn read_sink_url(dir: &PathBuf, to: &str) -> String {
         let sink_dir = dir.join("mail-sink");
         let mut last: Option<String> = None;
         for entry in std::fs::read_dir(&sink_dir).unwrap() {
@@ -627,16 +676,18 @@ mod tests {
                 let raw = std::fs::read_to_string(&path).unwrap();
                 let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
                 if parsed["to"].as_str() == Some(to) {
-                    last = Some(raw);
+                    assert!(!raw.contains("password"), "mail must not contain passwords");
+                    last = parsed["action_url"].as_str().map(|s| s.to_string());
                 }
             }
         }
-        let raw = last.expect("mail sink must contain the verification message");
-        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
-        let url = parsed["action_url"].as_str().unwrap().to_string();
+        last.expect("mail sink must contain the verification message")
+    }
+
+    fn read_sink_token(dir: &PathBuf, to: &str) -> String {
+        let url = read_sink_url(dir, to);
         let token = url.rsplit('=').next().unwrap().to_string();
         assert!(!token.is_empty());
-        assert!(!raw.contains("password"), "mail must not contain passwords");
         token
     }
 
@@ -690,7 +741,9 @@ mod tests {
 
         // Step 7: the task is visible in the user's lists with its date.
         let listed = tasks::list_tasks(&store, &user).unwrap();
-        assert!(listed.iter().any(|t| t.id == task.id && t.due_date == Some(today.clone())));
+        assert!(listed
+            .iter()
+            .any(|t| t.id == task.id && t.due_date == Some(today.clone())));
 
         // Step 8: focus session start -> pause -> resume -> finish.
         let session = focus::start_session(&store, &user, &task.id).unwrap();
@@ -709,10 +762,12 @@ mod tests {
         assert_eq!(delivered.status, "sent");
 
         // Steps 8-9: complete the task exactly once; the summary state updates.
-        let done = tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
+        let done =
+            tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
         assert_eq!(done.status, "completed");
         assert!(done.completed_at.is_some());
-        let completed_again = tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
+        let completed_again =
+            tasks::update_task(&store, &user, &task.id, None, None, Some("completed")).unwrap();
         assert_eq!(completed_again.completed_at, done.completed_at);
 
         // Step 11: sign out, sign back in, state persists.
@@ -744,6 +799,73 @@ mod tests {
         assert!(raw.contains("focusboard://task?id="));
         assert!(!raw.contains("token="));
         assert!(!raw.contains("password"));
+
+        // Step 12: warm second-instance focusboard:// activation. A later
+        // activation forwards the link over the running instance's socket and
+        // exits instead of booting a second full application.
+        auth::register(
+            &store,
+            &sink,
+            VERIFY_BASE,
+            "warm@example.com",
+            "gentle-river-8",
+            "Warm",
+        )
+        .unwrap();
+        let warm_url = read_sink_url(&dir, "warm@example.com");
+        let warm_socket = dir.join("warm-deeplink.sock");
+        let listener = UnixListener::bind(&warm_socket).unwrap();
+        let received = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 2048];
+            let n = stream.read(&mut buf).unwrap_or(0);
+            String::from_utf8_lossy(&buf[..n]).trim().to_string()
+        });
+        assert!(
+            forward_to_running_instance(&[warm_socket.clone()], &warm_url),
+            "warm activation must be acknowledged by the running instance"
+        );
+        let forwarded = received.join().unwrap();
+        assert_eq!(forwarded, warm_url);
+        let warm_token = token_from_link(&forwarded).expect("forwarded link carries a token");
+        assert_eq!(
+            token_from_link(&warm_url).as_deref(),
+            Some(warm_token.as_str())
+        );
+
+        // Step 13: cold focusboard:// boot. The launching link waits in
+        // PendingDeepLink and is handed to the webview exactly once, filtered
+        // to URLs that actually carry a token.
+        auth::register(
+            &store,
+            &sink,
+            VERIFY_BASE,
+            "cold@example.com",
+            "amber-harbor-6",
+            "Cold",
+        )
+        .unwrap();
+        let cold_url = read_sink_url(&dir, "cold@example.com");
+        let pending = PendingDeepLink(std::sync::Mutex::new(Some(cold_url.clone())));
+        let taken = {
+            let mut guard = pending.0.lock().unwrap();
+            guard.take().filter(|url| token_from_link(url).is_some())
+        };
+        assert_eq!(taken.as_deref(), Some(cold_url.as_str()));
+        assert!(
+            pending.0.lock().unwrap().take().is_none(),
+            "the link is delivered exactly once"
+        );
+        let cold_token = token_from_link(taken.as_deref().unwrap()).unwrap();
+        let verified = auth::verify_email_token(&store, &cold_token).unwrap();
+        assert_eq!(verified.email, "cold@example.com");
+
+        // Step 14: a reused link lands in the recoverable expired-link state
+        // without breaking the session or the store.
+        let err = auth::verify_email_token(&store, &cold_token).unwrap_err();
+        assert_eq!(err.code, "token_already_used");
+        let signed_in = auth::sign_in(&store, "cold@example.com", "amber-harbor-6").unwrap();
+        assert_eq!(signed_in.email, "cold@example.com");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -756,9 +878,15 @@ mod tests {
         // Pass 1: register -> verify -> sign in -> capture data.
         let user = {
             let store = open_store(&dir);
-            let outcome =
-                auth::register(&store, &sink, verify_base, "ada@example.com", "tulip-garnet-9", "Ada")
-                    .unwrap();
+            let outcome = auth::register(
+                &store,
+                &sink,
+                verify_base,
+                "ada@example.com",
+                "tulip-garnet-9",
+                "Ada",
+            )
+            .unwrap();
             assert_eq!(outcome, "verification_sent");
             let token = read_sink_token(&dir, "ada@example.com");
 
@@ -799,8 +927,12 @@ mod tests {
 
             let all = tasks::list_tasks(&store, &gate).unwrap();
             assert_eq!(all.len(), 2);
-            assert!(all.iter().any(|t| t.id == task.id && t.due_date == Some("2026-09-16".into())));
-            assert!(all.iter().any(|t| t.id == inbox_only.id && t.due_date.is_none()));
+            assert!(all
+                .iter()
+                .any(|t| t.id == task.id && t.due_date == Some("2026-09-16".into())));
+            assert!(all
+                .iter()
+                .any(|t| t.id == inbox_only.id && t.due_date.is_none()));
             signed_in
         }; // Store dropped: simulates a full application restart.
 
@@ -815,15 +947,28 @@ mod tests {
         assert_eq!(all.len(), 2);
 
         // User isolation: a second account must see none of Ada's rows.
-        auth::register(&store, &sink, verify_base, "grace@example.com", "cobalt-lantern-7", "Grace")
-            .unwrap();
+        auth::register(
+            &store,
+            &sink,
+            verify_base,
+            "grace@example.com",
+            "cobalt-lantern-7",
+            "Grace",
+        )
+        .unwrap();
         let grace_token = read_sink_token(&dir, "grace@example.com");
         auth::verify_email_token(&store, &grace_token).unwrap();
         let grace = auth::sign_in(&store, "grace@example.com", "cobalt-lantern-7").unwrap();
         let grace_projects = tasks::list_projects(&store, &grace).unwrap();
-        assert!(grace_projects.is_empty(), "other users must not see Ada's projects");
+        assert!(
+            grace_projects.is_empty(),
+            "other users must not see Ada's projects"
+        );
         let grace_tasks = tasks::list_tasks(&store, &grace).unwrap();
-        assert!(grace_tasks.is_empty(), "other users must not see Ada's tasks");
+        assert!(
+            grace_tasks.is_empty(),
+            "other users must not see Ada's tasks"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -832,8 +977,15 @@ mod tests {
         let dir = temp_dir("rate-limit");
         let sink = MailSink::new(&dir);
         let store = open_store(&dir);
-        auth::register(&store, &sink, "focusboard://auth", "lin@example.com", "quiet-harbor-3", "Lin")
-            .unwrap();
+        auth::register(
+            &store,
+            &sink,
+            "focusboard://auth",
+            "lin@example.com",
+            "quiet-harbor-3",
+            "Lin",
+        )
+        .unwrap();
         let token = read_sink_token(&dir, "lin@example.com");
         auth::verify_email_token(&store, &token).unwrap();
 
@@ -869,12 +1021,24 @@ mod tests {
             Some("abc123XYZ".to_string())
         );
         // Not a focusboard link: rejected outright.
-        assert_eq!(token_from_link("https://example.com/verify?token=abc123"), None);
+        assert_eq!(
+            token_from_link("https://example.com/verify?token=abc123"),
+            None
+        );
         assert_eq!(token_from_link("focusboard://auth/verify"), None);
-        assert_eq!(token_from_link("focusboard://auth/verify?email=a@b.c"), None);
+        assert_eq!(
+            token_from_link("focusboard://auth/verify?email=a@b.c"),
+            None
+        );
         // Encoded or punctuated payload: only the alphanumeric token is taken.
-        assert_eq!(token_from_link("focusboard://auth/verify?token=abc%20def"), Some("abc".to_string()));
-        assert_eq!(token_from_link("  focusboard://auth/verify?token=tok9  "), Some("tok9".to_string()));
+        assert_eq!(
+            token_from_link("focusboard://auth/verify?token=abc%20def"),
+            Some("abc".to_string())
+        );
+        assert_eq!(
+            token_from_link("  focusboard://auth/verify?token=tok9  "),
+            Some("tok9".to_string())
+        );
         assert_eq!(token_from_link("focusboard://auth/verify?token="), None);
     }
 
@@ -883,8 +1047,15 @@ mod tests {
         let dir = temp_dir("link-token-states");
         let sink = MailSink::new(&dir);
         let store = open_store(&dir);
-        auth::register(&store, &sink, VERIFY_BASE, "kim@example.com", "amber-meadow-5", "Kim")
-            .unwrap();
+        auth::register(
+            &store,
+            &sink,
+            VERIFY_BASE,
+            "kim@example.com",
+            "amber-meadow-5",
+            "Kim",
+        )
+        .unwrap();
         let token = read_sink_token(&dir, "kim@example.com");
 
         // A malformed token (e.g. tampered link) never matches: explicit error, no crash.
