@@ -43,8 +43,15 @@ impl PendingDeepLink {
 /// cold deliveries were handed to the webview, how many warm activations the
 /// listener forwarded, and the outcome of the most recent verification. The
 /// link URLs and token values themselves are never recorded here.
-#[derive(Default)]
-struct DeepLinkLedger(std::sync::Mutex<DeepLinkLedgerState>);
+///
+/// Counter persistence is strictly opt-in: only when the host evidence lane
+/// sets FOCUSBOARD_EVIDENCE_COUNTERS=1 does every update mirror to a
+/// machine-readable JSON file next to the store so an external collector can
+/// read activations off zero. Normal startup never writes this file.
+struct DeepLinkLedger {
+    state: std::sync::Mutex<DeepLinkLedgerState>,
+    mirror_path: Option<PathBuf>,
+}
 
 #[derive(Default)]
 struct DeepLinkLedgerState {
@@ -64,32 +71,62 @@ struct DeepLinkStatus {
 }
 
 impl DeepLinkLedger {
+    fn new(mirror_path: Option<PathBuf>) -> Self {
+        DeepLinkLedger {
+            state: std::sync::Mutex::new(DeepLinkLedgerState::default()),
+            mirror_path,
+        }
+    }
+
+    /// Mirrors the current counters to the opt-in evidence file. Counters and
+    /// outcome codes only — never link URLs or token material.
+    fn persist(&self, state: &DeepLinkLedgerState) {
+        let Some(path) = &self.mirror_path else {
+            return;
+        };
+        let json = serde_json::json!({
+            "cold_delivered": state.cold_delivered,
+            "warm_forwarded": state.warm_forwarded,
+            "last_verify_outcome": state.last_verify_outcome,
+            "last_reset_outcome": state.last_reset_outcome,
+            "updated_at": store::now_rfc3339(),
+        });
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json.to_string()).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
+
     fn record_cold_delivery(&self) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.state.lock() {
             guard.cold_delivered += 1;
+            self.persist(&guard);
         }
     }
 
     fn record_warm_forward(&self) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.state.lock() {
             guard.warm_forwarded += 1;
+            self.persist(&guard);
         }
     }
 
     fn record_verify_outcome(&self, outcome: &str) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.state.lock() {
             guard.last_verify_outcome = Some(outcome.to_string());
+            self.persist(&guard);
         }
     }
 
     fn record_reset_outcome(&self, outcome: &str) {
-        if let Ok(mut guard) = self.0.lock() {
+        if let Ok(mut guard) = self.state.lock() {
             guard.last_reset_outcome = Some(outcome.to_string());
+            self.persist(&guard);
         }
     }
 
     fn status(&self, pending_now: bool) -> DeepLinkStatus {
-        let guard = self.0.lock().ok();
+        let guard = self.state.lock().ok();
         let state = guard.as_deref();
         DeepLinkStatus {
             pending_now,
@@ -461,6 +498,40 @@ fn reset_password(
             Err(err)
         }
     }
+}
+
+#[tauri::command]
+fn change_password(
+    state: tauri::State<AppState>,
+    current_password: String,
+    new_password: String,
+) -> Result<auth::PublicUser, CommandError> {
+    map_result(&state, |s| {
+        auth::change_password(s, &current_password, &new_password)
+    })
+}
+
+#[tauri::command]
+fn list_sessions(state: tauri::State<AppState>) -> Result<Vec<auth::SessionInfo>, CommandError> {
+    map_result(&state, auth::list_sessions)
+}
+
+#[tauri::command]
+fn revoke_session(state: tauri::State<AppState>, session_id: String) -> Result<bool, CommandError> {
+    map_result(&state, |s| auth::revoke_session(s, &session_id))
+}
+
+#[tauri::command]
+fn revoke_all_other_sessions(state: tauri::State<AppState>) -> Result<u64, CommandError> {
+    map_result(&state, auth::revoke_all_other_sessions)
+}
+
+#[tauri::command]
+fn request_account_deletion(
+    state: tauri::State<AppState>,
+    confirmation: String,
+) -> Result<(), CommandError> {
+    map_result(&state, |s| auth::request_account_deletion(s, &confirmation))
 }
 
 #[tauri::command]
@@ -877,7 +948,15 @@ pub fn run() {
             if app.deep_link().register_all().is_err() {
                 register_scheme();
             }
-            app.manage(DeepLinkLedger::default());
+            // Delivery counters mirror to disk only behind the explicit
+            // evidence opt-in; a normal start writes nothing.
+            let evidence_counters =
+                std::env::var("FOCUSBOARD_EVIDENCE_COUNTERS").ok() == Some("1".to_string());
+            app.manage(DeepLinkLedger::new(if evidence_counters {
+                Some(data_dir.join("deeplink-counters.json"))
+            } else {
+                None
+            }));
             app.manage(StoreLocation {
                 identifier: app.config().identifier.clone(),
                 data_dir: data_dir.display().to_string(),
@@ -900,6 +979,11 @@ pub fn run() {
             request_verification_email,
             request_password_reset,
             reset_password,
+            change_password,
+            list_sessions,
+            revoke_session,
+            revoke_all_other_sessions,
+            request_account_deletion,
             take_deep_link,
             create_project,
             rename_project,
@@ -1169,7 +1253,7 @@ mod tests {
 
     #[test]
     fn deeplink_ledger_tracks_delivery_and_outcomes_without_links() {
-        let ledger = DeepLinkLedger::default();
+        let ledger = DeepLinkLedger::new(None);
         let status = ledger.status(true);
         assert!(status.pending_now);
         assert_eq!(status.cold_delivered, 0);
@@ -1192,6 +1276,35 @@ mod tests {
             Some("token_already_used")
         );
         assert_eq!(status.last_reset_outcome.as_deref(), Some("reset"));
+    }
+
+    #[test]
+    fn counter_mirror_writes_only_behind_explicit_opt_in_and_never_carries_tokens() {
+        let dir = temp_dir("counter-mirror");
+        let path = dir.join("deeplink-counters.json");
+
+        // Without the opt-in path, nothing is ever written to disk.
+        let silent = DeepLinkLedger::new(None);
+        silent.record_cold_delivery();
+        silent.record_warm_forward();
+        assert!(!path.exists());
+
+        // With the opt-in path, real activations are countable off zero by an
+        // external reader, and the file carries no link or token material.
+        let mirrored = DeepLinkLedger::new(Some(path.clone()));
+        mirrored.record_cold_delivery();
+        mirrored.record_cold_delivery();
+        mirrored.record_warm_forward();
+        mirrored.record_verify_outcome("verified");
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(parsed["cold_delivered"], 2);
+        assert_eq!(parsed["warm_forwarded"], 1);
+        assert_eq!(parsed["last_verify_outcome"], "verified");
+        assert!(parsed["updated_at"].as_str().is_some());
+        assert!(!raw.contains("focusboard://"));
+        assert!(!raw.contains("token"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

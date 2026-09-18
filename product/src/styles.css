@@ -974,6 +974,11 @@ select:hover {
   margin-bottom: 34px;
 }
 
+.settings-danger .section-title {
+  border-top: 1px solid var(--rule);
+  padding-top: 18px;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -997,6 +1002,7 @@ select:hover {
 }
 
 .settings-field input[type="text"],
+.settings-field input[type="password"],
 .settings-field select {
   border: 1px solid var(--rule);
   border-radius: var(--radius);
@@ -1007,6 +1013,7 @@ select:hover {
 }
 
 .settings-field input[type="text"]:focus,
+.settings-field input[type="password"]:focus,
 .settings-field select:focus {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;

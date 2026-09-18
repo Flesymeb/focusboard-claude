@@ -83,6 +83,14 @@ export interface Settings {
   notifications_enabled: boolean;
 }
 
+export interface SessionInfo {
+  id: string;
+  device: string;
+  created_at: string;
+  expires_at: string;
+  current: boolean;
+}
+
 export interface CommandErrorShape {
   code: string;
   message: string;

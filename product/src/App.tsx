@@ -266,12 +266,7 @@ export default function App() {
     }
   }
 
-  async function signOut() {
-    try {
-      await invoke("sign_out");
-    } catch {
-      // Sign-out is best-effort; the UI routes to sign-in regardless.
-    }
+  function resetToSignedOut(notice: string) {
     setTasks(null);
     setProjects(null);
     setReminders([]);
@@ -283,9 +278,18 @@ export default function App() {
       kind: "anonymous",
       view: "sign-in",
       email: "",
-      notice: "You're signed out.",
+      notice,
       tokenFromLink: null,
     });
+  }
+
+  async function signOut() {
+    try {
+      await invoke("sign_out");
+    } catch {
+      // Sign-out is best-effort; the UI routes to sign-in regardless.
+    }
+    resetToSignedOut("You're signed out.");
   }
 
   if (session.kind === "loading") {
@@ -558,6 +562,7 @@ export default function App() {
             tasks={tasks ?? []}
             timezone={session.user.timezone}
             onChanged={() => void refreshLists()}
+            onSessionEnded={resetToSignedOut}
           />
         )}
       </main>

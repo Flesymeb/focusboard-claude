@@ -25,6 +25,17 @@ pub struct PublicUser {
     pub status: String,
 }
 
+/// Non-secret session metadata for the Settings sessions list. Never carries
+/// the token or its hash.
+#[derive(Debug, Serialize, Clone)]
+pub struct SessionInfo {
+    pub id: String,
+    pub device: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub current: bool,
+}
+
 struct UserRow {
     id: String,
     email: String,
@@ -490,6 +501,12 @@ pub fn sign_in(store: &Store, email: &str, password: &str) -> CommandResult<Publ
             "Verify your email address before signing in. You can request a new verification email.",
         ));
     }
+    if user.status == "deletion_requested" {
+        return Err(CommandError::new(
+            "deletion_requested",
+            "This account has a pending deletion request and can no longer be signed in to.",
+        ));
+    }
     record_attempt(store, &email, true)?;
     create_session(store, &user.id)?;
     Ok(public_user(&user))
@@ -650,6 +667,194 @@ pub fn reset_password(store: &Store, token: &str, new_password: &str) -> Command
     let user = get_user_by_id(store, &user_id)
         .ok_or_else(|| CommandError::new("internal_error", "Account not found."))?;
     Ok(public_user(&user))
+}
+
+fn current_session_hash(store: &Store) -> Option<String> {
+    store.kv_get(CURRENT_SESSION_KEY)
+}
+
+/// Signed-in password change: proves the current password, enforces the same
+/// PRD 4.2 policy as registration, and invalidates every other session while
+/// the current one stays signed in.
+pub fn change_password(
+    store: &Store,
+    current_password: &str,
+    new_password: &str,
+) -> CommandResult<PublicUser> {
+    let signed_in = require_user(store)?;
+    let user = get_user_by_id(store, &signed_in.id)
+        .ok_or_else(|| CommandError::new("unauthenticated", "Sign in to continue."))?;
+    if !verify_password(current_password, &user.password_hash) {
+        return Err(CommandError::new(
+            "invalid_credentials",
+            "Your current password doesn't match. Try again, or reset it from the sign-in page.",
+        ));
+    }
+    validate_password(new_password)?;
+    let password_hash = hash_password(new_password)?;
+    store
+        .conn
+        .execute(
+            "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+            rusqlite::params![password_hash, user.id],
+        )
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not update password: {e}"))
+        })?;
+    match current_session_hash(store) {
+        Some(current_hash) => store
+            .conn
+            .execute(
+                "UPDATE sessions SET revoked = 1 WHERE user_id = ?1 AND token_hash != ?2",
+                rusqlite::params![user.id, current_hash],
+            )
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not end sessions: {e}"))
+            })?,
+        None => store
+            .conn
+            .execute(
+                "UPDATE sessions SET revoked = 1 WHERE user_id = ?1",
+                [&user.id],
+            )
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not end sessions: {e}"))
+            })?,
+    };
+    Ok(public_user(&user))
+}
+
+/// Active (unrevoked, unexpired) sessions for the signed-in account, newest
+/// first, with a flag naming the session this client is using.
+pub fn list_sessions(store: &Store) -> CommandResult<Vec<SessionInfo>> {
+    let user = require_user(store)?;
+    let current_hash = current_session_hash(store);
+    let mut stmt = store
+        .conn
+        .prepare(
+            "SELECT id, device, created_at, expires_at, token_hash FROM sessions
+             WHERE user_id = ?1 AND revoked = 0 AND expires_at > ?2
+             ORDER BY created_at DESC",
+        )
+        .map_err(|e| CommandError::new("storage_error", format!("Could not load sessions: {e}")))?;
+    let rows = stmt
+        .query_map(rusqlite::params![user.id, now_rfc3339()], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, String>(4)?,
+            ))
+        })
+        .map_err(|e| CommandError::new("storage_error", format!("Could not load sessions: {e}")))?;
+    let mut sessions = Vec::new();
+    for row in rows {
+        let (id, device, created_at, expires_at, token_hash) = row.map_err(|e| {
+            CommandError::new("storage_error", format!("Could not load sessions: {e}"))
+        })?;
+        sessions.push(SessionInfo {
+            current: current_hash.as_deref() == Some(token_hash.as_str()),
+            id,
+            device,
+            created_at,
+            expires_at,
+        });
+    }
+    Ok(sessions)
+}
+
+/// Revokes one session owned by the signed-in account. Returns whether the
+/// revoked session was the one this client is using, so the caller can route
+/// to sign-in when its own access just ended.
+pub fn revoke_session(store: &Store, session_id: &str) -> CommandResult<bool> {
+    let user = require_user(store)?;
+    let target: Option<String> = store
+        .conn
+        .query_row(
+            "SELECT token_hash FROM sessions WHERE id = ?1 AND user_id = ?2 AND revoked = 0",
+            rusqlite::params![session_id, user.id],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(|e| CommandError::new("storage_error", format!("Session lookup failed: {e}")))?;
+    let Some(token_hash) = target else {
+        return Err(CommandError::new(
+            "not_found",
+            "That session is no longer active.",
+        ));
+    };
+    store
+        .conn
+        .execute(
+            "UPDATE sessions SET revoked = 1 WHERE id = ?1 AND user_id = ?2",
+            rusqlite::params![session_id, user.id],
+        )
+        .map_err(|e| CommandError::new("storage_error", format!("Could not end session: {e}")))?;
+    let was_current = current_session_hash(store).as_deref() == Some(token_hash.as_str());
+    if was_current {
+        store.kv_delete(CURRENT_SESSION_KEY)?;
+    }
+    Ok(was_current)
+}
+
+/// Revokes every session for the signed-in account except the current one and
+/// returns how many were ended.
+pub fn revoke_all_other_sessions(store: &Store) -> CommandResult<u64> {
+    let user = require_user(store)?;
+    let n = match current_session_hash(store) {
+        Some(current_hash) => store
+            .conn
+            .execute(
+                "UPDATE sessions SET revoked = 1
+                 WHERE user_id = ?1 AND revoked = 0 AND token_hash != ?2",
+                rusqlite::params![user.id, current_hash],
+            )
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not end sessions: {e}"))
+            })?,
+        None => store
+            .conn
+            .execute(
+                "UPDATE sessions SET revoked = 1 WHERE user_id = ?1 AND revoked = 0",
+                [&user.id],
+            )
+            .map_err(|e| {
+                CommandError::new("storage_error", format!("Could not end sessions: {e}"))
+            })?,
+    };
+    Ok(n as u64)
+}
+
+/// Destructive operation: records the deletion request, invalidates every
+/// session, and ends this client's access. The typed confirmation is required
+/// server-side; session invalidation runs immediately per PRD 10.
+pub fn request_account_deletion(store: &Store, confirmation: &str) -> CommandResult<()> {
+    let user = require_user(store)?;
+    if confirmation.trim() != "DELETE" {
+        return Err(CommandError::new(
+            "confirmation_required",
+            "Type DELETE to confirm account deletion.",
+        ));
+    }
+    store
+        .conn
+        .execute(
+            "UPDATE users SET status = 'deletion_requested' WHERE id = ?1",
+            [&user.id],
+        )
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not record request: {e}"))
+        })?;
+    store
+        .conn
+        .execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ?1",
+            [&user.id],
+        )
+        .map_err(|e| CommandError::new("storage_error", format!("Could not end sessions: {e}")))?;
+    store.kv_delete(CURRENT_SESSION_KEY)?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -827,6 +1032,169 @@ mod tests {
             .action_url
             .starts_with("focusboard://auth/reset?token=tok123"));
         assert!(!stored.body_text.to_lowercase().contains("password:"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn change_password_rejects_wrong_current_and_revokes_other_sessions() {
+        let dir = temp_dir("change-password");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        // A second sign-in creates another live session; the pointer is on it.
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+
+        // Wrong current password: actionable error, nothing changes.
+        let err = change_password(&store, "not-my-password-1", "harbor-quartz-4").unwrap_err();
+        assert_eq!(err.code, "invalid_credentials");
+        assert!(err.message.contains("current password"));
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+
+        // Policy violations carry the actionable registration-policy message.
+        let err = change_password(&store, "tulip-garnet-9", "short").unwrap_err();
+        assert_eq!(err.code, "weak_password");
+        assert!(err.message.contains("8 characters"));
+
+        let user = change_password(&store, "tulip-garnet-9", "harbor-quartz-4").unwrap();
+        assert_eq!(user.email, "ada@example.com");
+
+        // Other sessions are gone; the current one survives.
+        let sessions = list_sessions(&store).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].current);
+        assert!(current_user(&store).is_ok());
+
+        let err = sign_in(&store, "ada@example.com", "tulip-garnet-9").unwrap_err();
+        assert_eq!(err.code, "invalid_credentials");
+        sign_in_ok(&store, "ada@example.com", "harbor-quartz-4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn session_list_shows_metadata_and_revocation_is_user_scoped() {
+        let dir = temp_dir("sessions");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+
+        let sessions = list_sessions(&store).unwrap();
+        assert_eq!(sessions.len(), 3);
+        assert_eq!(sessions.iter().filter(|s| s.current).count(), 1);
+        assert!(sessions.iter().all(|s| s.device == "desktop"
+            && !s.created_at.is_empty()
+            && !s.expires_at.is_empty()));
+
+        // Revoking someone else's session id (or a dead id) is an explicit miss.
+        let err = revoke_session(&store, "ses_does_not_exist").unwrap_err();
+        assert_eq!(err.code, "not_found");
+
+        // A second account's session is unreachable through this command.
+        auth_register_verify(&store, &sink, "grace@example.com", "cobalt-lantern-7");
+        sign_in_ok(&store, "grace@example.com", "cobalt-lantern-7");
+        let grace_id: String = store
+            .conn
+            .query_row(
+                "SELECT s.id FROM sessions s JOIN users u ON u.id = s.user_id
+                 WHERE u.email = 'grace@example.com' AND s.revoked = 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+        let err = revoke_session(&store, &grace_id).unwrap_err();
+        assert_eq!(err.code, "not_found");
+        let still_there: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE id = ?1 AND revoked = 0",
+                [&grace_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(still_there, 1);
+
+        // Revoking one of Ada's own non-current sessions works immediately.
+        let target = sessions.iter().find(|s| !s.current).unwrap().id.clone();
+        let was_current = revoke_session(&store, &target).unwrap();
+        assert!(!was_current);
+        let sessions = list_sessions(&store).unwrap();
+        assert_eq!(sessions.len(), 3);
+        assert!(!sessions.iter().any(|s| s.id == target));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn revoking_the_current_session_ends_this_client_access() {
+        let dir = temp_dir("revoke-current");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        let sessions = list_sessions(&store).unwrap();
+        let current = sessions.iter().find(|s| s.current).unwrap();
+
+        let was_current = revoke_session(&store, &current.id).unwrap();
+        assert!(was_current);
+        assert!(current_user(&store).is_err());
+        // Signing back in recovers a working session.
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+        assert!(current_user(&store).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn revoke_all_other_sessions_keeps_current() {
+        let dir = temp_dir("revoke-all");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+
+        let ended = revoke_all_other_sessions(&store).unwrap();
+        assert_eq!(ended, 2);
+        let sessions = list_sessions(&store).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions[0].current);
+        assert!(current_user(&store).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn account_deletion_requires_confirmation_and_invalidates_sessions() {
+        let dir = temp_dir("deletion");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        sign_in_ok(&store, "ada@example.com", "tulip-garnet-9");
+
+        // Missing or wrong confirmation is rejected and changes nothing.
+        let err = request_account_deletion(&store, "delete").unwrap_err();
+        assert_eq!(err.code, "confirmation_required");
+        assert!(current_user(&store).is_ok());
+
+        request_account_deletion(&store, "DELETE").unwrap();
+        // Every session is invalidated, including this client's.
+        assert!(current_user(&store).is_err());
+        let live: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE user_id IN
+                 (SELECT id FROM users WHERE email = 'ada@example.com') AND revoked = 0",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(live, 0);
+        let status: String = store
+            .conn
+            .query_row(
+                "SELECT status FROM users WHERE email = 'ada@example.com'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "deletion_requested");
+
+        // The account can no longer be signed in to.
+        let err = sign_in(&store, "ada@example.com", "tulip-garnet-9").unwrap_err();
+        assert_eq!(err.code, "deletion_requested");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
