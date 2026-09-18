@@ -84,6 +84,23 @@ pub fn verification_message(to: &str, token: &str, verify_base: &str) -> MailMes
     }
 }
 
+/// Password-reset email: the action link is a short-lived one-time token under
+/// PRD 4.2's allowance; the body stays neutral and never names whether the
+/// address is registered.
+pub fn password_reset_message(to: &str, token: &str, reset_base: &str) -> MailMessage {
+    let action_url = format!("{reset_base}?token={token}");
+    MailMessage {
+        id: crate::store::new_id("mail"),
+        to: to.to_string(),
+        subject: "Reset your Focusboard password".to_string(),
+        body_text: format!(
+            "A password reset was requested for Focusboard.\n\nSet a new password here:\n{action_url}\n\nThe link is single-use and expires in 60 minutes. If you did not request this, you can ignore this message and your password stays unchanged."
+        ),
+        action_url,
+        created_at: crate::store::now_rfc3339(),
+    }
+}
+
 /// Reminder email: product identity, task title, due context, and a deep link
 /// that opens the task in the signed-in app. The link carries only the task
 /// id — never a token, credential, or private content beyond the task title.

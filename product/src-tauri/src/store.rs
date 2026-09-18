@@ -25,7 +25,7 @@ pub struct Store {
     pub conn: Connection,
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE IF NOT EXISTS users (
@@ -134,6 +134,18 @@ const SCHEMA_V2: &str = "
         created_at TEXT NOT NULL
     );";
 
+/// v3 adds the per-email auth-request log used to rate-limit password-reset
+/// and verification-email endpoints. It records email shape and request kind
+/// only — never tokens, credentials, or whether an address is registered.
+const SCHEMA_V3: &str = "
+    CREATE TABLE auth_requests (
+        email TEXT NOT NULL COLLATE NOCASE,
+        kind TEXT NOT NULL,
+        requested_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_auth_requests
+        ON auth_requests(email, kind, requested_at);";
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
@@ -155,6 +167,10 @@ impl Store {
         if version < 2 {
             self.conn
                 .execute_batch(&format!("BEGIN; {SCHEMA_V2} COMMIT;"))?;
+        }
+        if version < 3 {
+            self.conn
+                .execute_batch(&format!("BEGIN; {SCHEMA_V3} COMMIT;"))?;
         }
         if version < SCHEMA_VERSION {
             self.conn

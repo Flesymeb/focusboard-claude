@@ -18,6 +18,7 @@ interface DeepLinkStatus {
   cold_delivered: number;
   warm_forwarded: number;
   last_verify_outcome: string | null;
+  last_reset_outcome: string | null;
 }
 
 interface StoreLocation {
@@ -329,6 +330,7 @@ export function GoldenPathProbe(props: {
     cold_delivered: 0,
     warm_forwarded: 0,
     last_verify_outcome: null,
+    last_reset_outcome: null,
   });
   const [store, setStore] = useState<StoreLocation | null>(null);
   const driving = useRef(false);
@@ -397,6 +399,7 @@ export function GoldenPathProbe(props: {
       data-deeplink-warm-forwarded={deeplink.warm_forwarded}
       data-deeplink-pending={deeplink.pending_now ? "true" : "false"}
       data-deeplink-last-outcome={deeplink.last_verify_outcome ?? ""}
+      data-deeplink-last-reset-outcome={deeplink.last_reset_outcome ?? ""}
       data-store-identifier={store?.identifier ?? ""}
       data-store-data-dir={store?.data_dir ?? ""}
       data-store-sqlite-file={store?.sqlite_file ?? ""}

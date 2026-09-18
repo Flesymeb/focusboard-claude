@@ -50,6 +50,7 @@ struct DeepLinkLedgerState {
     cold_delivered: u32,
     warm_forwarded: u32,
     last_verify_outcome: Option<String>,
+    last_reset_outcome: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -58,6 +59,7 @@ struct DeepLinkStatus {
     cold_delivered: u32,
     warm_forwarded: u32,
     last_verify_outcome: Option<String>,
+    last_reset_outcome: Option<String>,
 }
 
 impl DeepLinkLedger {
@@ -79,6 +81,12 @@ impl DeepLinkLedger {
         }
     }
 
+    fn record_reset_outcome(&self, outcome: &str) {
+        if let Ok(mut guard) = self.0.lock() {
+            guard.last_reset_outcome = Some(outcome.to_string());
+        }
+    }
+
     fn status(&self, pending_now: bool) -> DeepLinkStatus {
         let guard = self.0.lock().ok();
         let state = guard.as_deref();
@@ -87,6 +95,7 @@ impl DeepLinkLedger {
             cold_delivered: state.map(|s| s.cold_delivered).unwrap_or(0),
             warm_forwarded: state.map(|s| s.warm_forwarded).unwrap_or(0),
             last_verify_outcome: state.and_then(|s| s.last_verify_outcome.clone()),
+            last_reset_outcome: state.and_then(|s| s.last_reset_outcome.clone()),
         }
     }
 }
@@ -411,6 +420,46 @@ fn request_verification_email(
     map_result(&state, |s| {
         auth::request_verification_email(s, &state.sink, &state.verify_base, &email)
     })
+}
+
+/// The reset email's action link targets the auth/reset route of the same
+/// focusboard:// scheme the verification flow uses.
+fn reset_base(verify_base: &str) -> String {
+    format!("{verify_base}/reset")
+}
+
+#[tauri::command]
+fn request_password_reset(
+    state: tauri::State<AppState>,
+    email: String,
+) -> Result<(), CommandError> {
+    map_result(&state, |s| {
+        auth::request_password_reset(s, &state.sink, &reset_base(&state.verify_base), &email)
+    })
+}
+
+#[tauri::command]
+fn reset_password(
+    state: tauri::State<AppState>,
+    ledger: tauri::State<DeepLinkLedger>,
+    token: String,
+    password: String,
+) -> Result<auth::PublicUser, CommandError> {
+    match map_result(&state, |s| auth::reset_password(s, &token, &password)) {
+        Ok(user) => {
+            ledger.record_reset_outcome("reset");
+            Ok(user)
+        }
+        Err(err) => {
+            if matches!(
+                err.code.as_str(),
+                "token_already_used" | "token_expired" | "invalid_token"
+            ) {
+                ledger.record_reset_outcome(&err.code);
+            }
+            Err(err)
+        }
+    }
 }
 
 #[tauri::command]
@@ -749,6 +798,8 @@ pub fn run() {
             sign_out,
             session_status,
             request_verification_email,
+            request_password_reset,
+            reset_password,
             take_deep_link,
             create_project,
             rename_project,
@@ -1015,12 +1066,14 @@ mod tests {
         assert_eq!(status.cold_delivered, 0);
         assert_eq!(status.warm_forwarded, 0);
         assert_eq!(status.last_verify_outcome, None);
+        assert_eq!(status.last_reset_outcome, None);
 
         ledger.record_cold_delivery();
         ledger.record_cold_delivery();
         ledger.record_warm_forward();
         ledger.record_verify_outcome("verified");
         ledger.record_verify_outcome("token_already_used");
+        ledger.record_reset_outcome("reset");
         let status = ledger.status(false);
         assert!(!status.pending_now);
         assert_eq!(status.cold_delivered, 2);
@@ -1029,6 +1082,7 @@ mod tests {
             status.last_verify_outcome.as_deref(),
             Some("token_already_used")
         );
+        assert_eq!(status.last_reset_outcome.as_deref(), Some("reset"));
     }
 
     #[test]
@@ -1246,9 +1300,7 @@ mod tests {
             .as_array()
             .unwrap_or_else(|| panic!("deep-link desktop schemes missing from built config"));
         assert!(
-            schemes
-                .iter()
-                .any(|s| s.as_str() == Some("focusboard")),
+            schemes.iter().any(|s| s.as_str() == Some("focusboard")),
             "focusboard scheme not registered in built config: {schemes:?}"
         );
     }

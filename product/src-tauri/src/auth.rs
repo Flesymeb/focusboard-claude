@@ -1,4 +1,4 @@
-use crate::mail::{verification_message, MailSink};
+use crate::mail::{password_reset_message, verification_message, MailSink};
 use crate::store::{new_id, now_rfc3339, CommandError, CommandResult, Store};
 use argon2::password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, SaltString};
 use argon2::{Argon2, PasswordVerifier};
@@ -9,8 +9,11 @@ use sha2::{Digest, Sha256};
 
 const SESSION_TTL_DAYS: i64 = 30;
 const VERIFY_TTL_HOURS: i64 = 24;
+const RESET_TTL_MINUTES: i64 = 60;
 const MAX_FAILED_ATTEMPTS: i64 = 5;
 const ATTEMPT_WINDOW_MINUTES: i64 = 15;
+const MAX_AUTH_REQUESTS: i64 = 3;
+const REQUEST_WINDOW_MINUTES: i64 = 15;
 const CURRENT_SESSION_KEY: &str = "current_session_token_hash";
 
 #[derive(Debug, Serialize, Clone)]
@@ -152,13 +155,18 @@ fn public_user(user: &UserRow) -> PublicUser {
     }
 }
 
-fn create_email_token(store: &Store, user_id: &str, purpose: &str) -> CommandResult<String> {
+fn create_email_token(
+    store: &Store,
+    user_id: &str,
+    purpose: &str,
+    ttl: Duration,
+) -> CommandResult<String> {
     use rand::RngCore;
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     let token: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
-    let expires_at = (chrono::Utc::now() + Duration::hours(VERIFY_TTL_HOURS))
-        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let expires_at =
+        (chrono::Utc::now() + ttl).to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     store
         .conn
         .execute(
@@ -188,7 +196,12 @@ pub fn send_verification_email(
     user_id: &str,
     email: &str,
 ) -> CommandResult<()> {
-    let token = create_email_token(store, user_id, "verify_email")?;
+    let token = create_email_token(
+        store,
+        user_id,
+        "verify_email",
+        Duration::hours(VERIFY_TTL_HOURS),
+    )?;
     let message = verification_message(email, &token, verify_base);
     sink.deliver(&message)
         .map_err(|e| CommandError::new("mail_delivery_failed", e))
@@ -228,6 +241,40 @@ fn record_attempt(store: &Store, email: &str, success: bool) -> CommandResult<()
             })?;
     }
     Ok(())
+}
+
+/// Per-email request log for the password-reset and verification-email
+/// endpoints. Requests are recorded for every well-formed address — known or
+/// not — so rate-limit behavior cannot distinguish registered accounts.
+fn auth_requests_since(store: &Store, email: &str, kind: &str, since: &str) -> i64 {
+    store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM auth_requests
+             WHERE email = ?1 COLLATE NOCASE AND kind = ?2 AND requested_at >= ?3",
+            rusqlite::params![email, kind, since],
+            |r| r.get(0),
+        )
+        .unwrap_or(0)
+}
+
+fn record_auth_request(store: &Store, email: &str, kind: &str) -> CommandResult<()> {
+    store
+        .conn
+        .execute(
+            "INSERT INTO auth_requests(email, kind, requested_at) VALUES(?1, ?2, ?3)",
+            rusqlite::params![email.trim(), kind, now_rfc3339()],
+        )
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not record request: {e}"))
+        })?;
+    Ok(())
+}
+
+fn auth_request_limit_reached(store: &Store, email: &str, kind: &str) -> bool {
+    let cutoff = (chrono::Utc::now() - Duration::minutes(REQUEST_WINDOW_MINUTES))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    auth_requests_since(store, email, kind, &cutoff) >= MAX_AUTH_REQUESTS
 }
 
 fn create_session(store: &Store, user_id: &str) -> CommandResult<String> {
@@ -471,11 +518,315 @@ pub fn request_verification_email(
     email: &str,
 ) -> CommandResult<()> {
     validate_email(email)?;
-    if let Some(user) = get_user_by_email(store, email.trim()) {
+    let email = email.trim().to_string();
+    if auth_request_limit_reached(store, &email, "verify_email") {
+        return Err(CommandError::new(
+            "attempt_limit",
+            "Too many email requests. Wait a few minutes and try again.",
+        ));
+    }
+    record_auth_request(store, &email, "verify_email")?;
+    if let Some(user) = get_user_by_email(store, &email) {
         if user.status == "unverified" {
             send_verification_email(store, sink, verify_base, &user.id, &user.email)?;
         }
     }
     // Always reported as accepted so the endpoint cannot probe for accounts.
     Ok(())
+}
+
+/// Forgot-password entry point. Every well-formed request is recorded against
+/// the rate limit and answered identically, whether or not the address is
+/// registered — a reset email is delivered only for active accounts.
+pub fn request_password_reset(
+    store: &Store,
+    sink: &MailSink,
+    reset_base: &str,
+    email: &str,
+) -> CommandResult<()> {
+    validate_email(email)?;
+    let email = email.trim().to_string();
+    if auth_request_limit_reached(store, &email, "password_reset") {
+        return Err(CommandError::new(
+            "attempt_limit",
+            "Too many reset requests. Wait a few minutes and try again.",
+        ));
+    }
+    record_auth_request(store, &email, "password_reset")?;
+    if let Some(user) = get_user_by_email(store, &email) {
+        if user.status == "active" {
+            let token = create_email_token(
+                store,
+                &user.id,
+                "password_reset",
+                Duration::minutes(RESET_TTL_MINUTES),
+            )?;
+            let message = password_reset_message(&user.email, &token, reset_base);
+            sink.deliver(&message)
+                .map_err(|e| CommandError::new("mail_delivery_failed", e))?;
+        }
+    }
+    Ok(())
+}
+
+/// Consumes a single-use reset token and completes the password change.
+/// Expired, already-used, and unknown tokens each fail with their own
+/// recoverable error so the reset page can render the matching state. A
+/// completed reset revokes every session the user still holds.
+pub fn reset_password(store: &Store, token: &str, new_password: &str) -> CommandResult<PublicUser> {
+    let token = token.trim();
+    let token_hash = hash_token(token);
+    let row: Option<(String, String, Option<String>)> = store
+        .conn
+        .query_row(
+            "SELECT user_id, expires_at, consumed_at FROM email_tokens
+             WHERE token_hash = ?1 AND purpose = 'password_reset'",
+            [&token_hash],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(|e| CommandError::new("storage_error", format!("Token lookup failed: {e}")))?;
+    let Some((user_id, expires_at, consumed_at)) = row else {
+        return Err(CommandError::new(
+            "invalid_token",
+            "This reset link is not valid. Request a fresh reset email.",
+        ));
+    };
+    if consumed_at.is_some() {
+        return Err(CommandError::new(
+            "token_already_used",
+            "This reset link was already used. Request a fresh one to set a new password.",
+        ));
+    }
+    let expires = chrono::DateTime::parse_from_rfc3339(&expires_at)
+        .map_err(|_| CommandError::new("internal_error", "Stored token expiry is malformed."))?;
+    if chrono::Utc::now() >= expires {
+        return Err(CommandError::new(
+            "token_expired",
+            "This reset link expired. Request a fresh reset email.",
+        ));
+    }
+    validate_password(new_password)?;
+    store
+        .conn
+        .execute(
+            "UPDATE email_tokens SET consumed_at = ?1 WHERE token_hash = ?2 AND consumed_at IS NULL",
+            rusqlite::params![now_rfc3339(), token_hash],
+        )
+        .map_err(|e| CommandError::new("storage_error", format!("Could not consume token: {e}")))?;
+    let password_hash = hash_password(new_password)?;
+    store
+        .conn
+        .execute(
+            "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+            rusqlite::params![password_hash, user_id],
+        )
+        .map_err(|e| {
+            CommandError::new("storage_error", format!("Could not update password: {e}"))
+        })?;
+    // The reset invalidates every live session for this account; the current
+    // desktop pointer is cleared only when it pointed at one of them.
+    store
+        .conn
+        .execute(
+            "UPDATE sessions SET revoked = 1 WHERE user_id = ?1",
+            [&user_id],
+        )
+        .map_err(|e| CommandError::new("storage_error", format!("Could not end sessions: {e}")))?;
+    if let Some(current_hash) = store.kv_get(CURRENT_SESSION_KEY) {
+        let belongs: Option<i64> = store
+            .conn
+            .query_row(
+                "SELECT 1 FROM sessions WHERE token_hash = ?1 AND user_id = ?2",
+                rusqlite::params![current_hash, user_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .unwrap_or(None);
+        if belongs.is_some() {
+            store.kv_delete(CURRENT_SESSION_KEY)?;
+        }
+    }
+    let user = get_user_by_id(store, &user_id)
+        .ok_or_else(|| CommandError::new("internal_error", "Account not found."))?;
+    Ok(public_user(&user))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mail::MailSink;
+    use crate::store::new_id;
+    use std::path::PathBuf;
+
+    const RESET_BASE: &str = "focusboard://auth/reset";
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("focusboard-auth-{name}-{}", new_id("t")));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn open_store(dir: &PathBuf) -> Store {
+        Store::open(&dir.join("focusboard.sqlite3")).unwrap()
+    }
+
+    /// Registers, verifies, signs in, and returns the signed-in store context.
+    fn active_account(dir: &PathBuf, sink: &MailSink, email: &str, password: &str) -> Store {
+        let store = open_store(dir);
+        auth_register_verify(&store, sink, email, password);
+        sign_in_ok(&store, email, password);
+        store
+    }
+
+    fn auth_register_verify(store: &Store, sink: &MailSink, email: &str, password: &str) {
+        register(store, sink, "focusboard://auth", email, password, "Ada").unwrap();
+        let token = sink_token(sink, email);
+        verify_email_token(store, &token).unwrap();
+    }
+
+    fn sign_in_ok(store: &Store, email: &str, password: &str) {
+        sign_in(store, email, password).unwrap();
+    }
+
+    fn sink_token(sink: &MailSink, email: &str) -> String {
+        sink.read_messages()
+            .iter()
+            .filter(|m| m.to == email && crate::token_from_link(&m.action_url).is_some())
+            .max_by(|a, b| a.created_at.cmp(&b.created_at))
+            .and_then(|m| crate::token_from_link(&m.action_url))
+            .expect("expected an email with an action token")
+    }
+
+    #[test]
+    fn reset_journey_updates_password_and_revokes_sessions() {
+        let dir = temp_dir("journey");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        assert!(current_user(&store).is_ok());
+
+        request_password_reset(&store, &sink, RESET_BASE, "ada@example.com").unwrap();
+        let token = sink_token(&sink, "ada@example.com");
+
+        let user = reset_password(&store, &token, "harbor-quartz-4").unwrap();
+        assert_eq!(user.email, "ada@example.com");
+
+        // The reset invalidated the pre-reset session.
+        assert!(current_user(&store).is_err());
+
+        // Old password is rejected; the new one signs in durably.
+        let err = sign_in(&store, "ada@example.com", "tulip-garnet-9").unwrap_err();
+        assert_eq!(err.code, "invalid_credentials");
+        sign_in_ok(&store, "ada@example.com", "harbor-quartz-4");
+        assert!(current_user(&store).is_ok());
+
+        // Single-use: a second reset with the same token is recoverable.
+        let err = reset_password(&store, &token, "another-lumen-8").unwrap_err();
+        assert_eq!(err.code, "token_already_used");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reset_token_expiry_is_recoverable() {
+        let dir = temp_dir("expiry");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "grace@example.com", "tulip-garnet-9");
+
+        request_password_reset(&store, &sink, RESET_BASE, "grace@example.com").unwrap();
+        let token = sink_token(&sink, "grace@example.com");
+        let expired = (chrono::Utc::now() - Duration::minutes(1))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        store
+            .conn
+            .execute(
+                "UPDATE email_tokens SET expires_at = ?1 WHERE purpose = 'password_reset'",
+                [&expired],
+            )
+            .unwrap();
+
+        let err = reset_password(&store, &token, "harbor-quartz-4").unwrap_err();
+        assert_eq!(err.code, "token_expired");
+        // The stale credential still works; nothing was changed.
+        sign_in_ok(&store, "grace@example.com", "tulip-garnet-9");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn weak_reset_password_keeps_token_usable_with_actionable_error() {
+        let dir = temp_dir("policy");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "lin@example.com", "tulip-garnet-9");
+
+        request_password_reset(&store, &sink, RESET_BASE, "lin@example.com").unwrap();
+        let token = sink_token(&sink, "lin@example.com");
+
+        let err = reset_password(&store, &token, "short").unwrap_err();
+        assert_eq!(err.code, "weak_password");
+        assert!(err.message.contains("8 characters"));
+
+        // The token was not consumed by the rejected attempt.
+        reset_password(&store, &token, "harbor-quartz-4").unwrap();
+        sign_in_ok(&store, "lin@example.com", "harbor-quartz-4");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn forgot_password_response_hides_account_existence() {
+        let dir = temp_dir("enumeration");
+        let sink = MailSink::new(&dir);
+        let store = active_account(&dir, &sink, "ada@example.com", "tulip-garnet-9");
+        let before = sink.read_messages().len();
+
+        // Unknown address: accepted identically, no email delivered.
+        request_password_reset(&store, &sink, RESET_BASE, "ghost@example.com").unwrap();
+        assert_eq!(sink.read_messages().len(), before);
+
+        // Known address: accepted, reset email delivered.
+        request_password_reset(&store, &sink, RESET_BASE, "ada@example.com").unwrap();
+        assert_eq!(sink.read_messages().len(), before + 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reset_requests_are_rate_limited_per_email() {
+        let dir = temp_dir("ratelimit");
+        let sink = MailSink::new(&dir);
+        let store = open_store(&dir);
+
+        for _ in 0..MAX_AUTH_REQUESTS {
+            request_password_reset(&store, &sink, RESET_BASE, "stranger@example.com").unwrap();
+        }
+        let err =
+            request_password_reset(&store, &sink, RESET_BASE, "stranger@example.com").unwrap_err();
+        assert_eq!(err.code, "attempt_limit");
+        assert!(sink.read_messages().is_empty());
+
+        // A different address still has its own budget.
+        request_password_reset(&store, &sink, RESET_BASE, "other@example.com").unwrap();
+
+        // Verification-email requests share the same protection.
+        for _ in 0..MAX_AUTH_REQUESTS {
+            request_verification_email(&store, &sink, "focusboard://auth", "v@example.com")
+                .unwrap();
+        }
+        let err = request_verification_email(&store, &sink, "focusboard://auth", "v@example.com")
+            .unwrap_err();
+        assert_eq!(err.code, "attempt_limit");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reset_email_carries_single_use_action_link() {
+        let dir = temp_dir("message");
+        let sink = MailSink::new(&dir);
+        let message = password_reset_message("ada@example.com", "tok123", RESET_BASE);
+        sink.deliver(&message).unwrap();
+        let stored = &sink.read_messages()[0];
+        assert_eq!(stored.subject, "Reset your Focusboard password");
+        assert!(stored
+            .action_url
+            .starts_with("focusboard://auth/reset?token=tok123"));
+        assert!(!stored.body_text.to_lowercase().contains("password:"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

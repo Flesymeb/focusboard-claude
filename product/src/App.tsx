@@ -10,8 +10,11 @@ import {
 } from "./api";
 import {
   CreateAccountView,
+  ForgotPasswordView,
+  ResetPasswordView,
   SignInView,
   VerifyEmailView,
+  linkKindFromUrl,
   tokenFromLinkUrl,
 } from "./auth/AuthViews";
 import { GoldenPathProbe } from "./GoldenPathProbe";
@@ -23,7 +26,7 @@ import { SettingsView } from "./views/SettingsView";
 import { TodayView } from "./views/TodayView";
 import { Icon } from "./ui";
 
-type AuthView = "sign-in" | "create-account" | "verify";
+type AuthView = "sign-in" | "create-account" | "verify" | "forgot-password" | "reset";
 
 type Session =
   | { kind: "loading" }
@@ -42,6 +45,19 @@ function verifyTokenFromHash(): string | null {
   const hash = window.location.hash;
   const match = hash.match(/[#/]verify\?token=([A-Za-z0-9]+)/) ?? hash.match(/token=([A-Za-z0-9]+)/);
   return match ? match[1] : null;
+}
+
+/** Routes a hash-delivered activation link to its verify or reset surface. */
+function linkTokenFromHash(): { kind: "verify" | "reset"; token: string } | null {
+  const hash = window.location.hash;
+  const reset = hash.match(/reset\?token=([A-Za-z0-9]+)/);
+  if (reset) return { kind: "reset", token: reset[1] };
+  const token = verifyTokenFromHash();
+  return token ? { kind: "verify", token } : null;
+}
+
+function authViewForLink(kind: "verify" | "reset"): AuthView {
+  return kind === "reset" ? "reset" : "verify";
 }
 
 export default function App() {
@@ -79,16 +95,19 @@ export default function App() {
 
   const bootstrap = useCallback(async () => {
     try {
-      const hashToken = verifyTokenFromHash();
-      const linkToken =
-        hashToken ?? tokenFromLinkUrl((await invoke<string | null>("take_deep_link")) ?? "");
+      const hashLink = linkTokenFromHash();
+      const linkUrl = (await invoke<string | null>("take_deep_link")) ?? "";
+      const linkToken = hashLink
+        ? hashLink.token
+        : tokenFromLinkUrl(linkUrl);
+      const linkKind = hashLink?.kind ?? linkKindFromUrl(linkUrl);
       const user = await invoke<PublicUser | null>("session_status");
       if (user) {
         setSession({ kind: "signedIn", user });
       } else {
         setSession({
           kind: "anonymous",
-          view: linkToken ? "verify" : "sign-in",
+          view: linkToken && linkKind ? authViewForLink(linkKind) : "sign-in",
           email: "",
           notice: null,
           tokenFromLink: linkToken,
@@ -117,11 +136,13 @@ export default function App() {
     let dispose: (() => void) | undefined;
     void import("@tauri-apps/api/event").then(({ listen }) =>
       listen<string>("deep-link", (event) => {
-        const token = tokenFromLinkUrl(event.payload ?? "");
+        const url = event.payload ?? "";
+        const token = tokenFromLinkUrl(url);
         if (!token) return;
+        const view = authViewForLink(linkKindFromUrl(url) ?? "verify");
         setSession((prev) =>
           prev.kind === "anonymous"
-            ? { ...prev, view: "verify", tokenFromLink: token }
+            ? { ...prev, view, tokenFromLink: token }
             : prev,
         );
       }),
@@ -345,6 +366,42 @@ export default function App() {
                 view: "sign-in",
                 email,
                 notice: "Email verified. Sign in to continue.",
+                tokenFromLink: null,
+              })
+            }
+            goTo={(v) =>
+              setSession({
+                kind: "anonymous",
+                view: v,
+                email,
+                notice: null,
+                tokenFromLink: null,
+              })
+            }
+          />
+        )}
+        {view === "forgot-password" && (
+          <ForgotPasswordView
+            goTo={(v) =>
+              setSession({
+                kind: "anonymous",
+                view: v,
+                email,
+                notice: null,
+                tokenFromLink: null,
+              })
+            }
+          />
+        )}
+        {view === "reset" && (
+          <ResetPasswordView
+            token={tokenFromLink}
+            onDone={() =>
+              setSession({
+                kind: "anonymous",
+                view: "sign-in",
+                email,
+                notice: "Password updated. Sign in with your new password.",
                 tokenFromLink: null,
               })
             }
