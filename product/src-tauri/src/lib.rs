@@ -1,5 +1,6 @@
 mod auth;
 mod focus;
+mod golden_path;
 mod mail;
 mod reminders;
 mod store;
@@ -29,8 +30,67 @@ const DEEP_LINK_SOCKET: &str = "focusboard-deeplink.sock";
 /// yet handed to the webview.
 struct PendingDeepLink(std::sync::Mutex<Option<String>>);
 
+impl PendingDeepLink {
+    fn peek(&self) -> bool {
+        self.0.lock().map(|guard| guard.is_some()).unwrap_or(false)
+    }
+}
+
+/// Out-of-process observable record of focusboard:// activation: how many
+/// cold deliveries were handed to the webview, how many warm activations the
+/// listener forwarded, and the outcome of the most recent verification. The
+/// link URLs and token values themselves are never recorded here.
+#[derive(Default)]
+struct DeepLinkLedger(std::sync::Mutex<DeepLinkLedgerState>);
+
+#[derive(Default)]
+struct DeepLinkLedgerState {
+    cold_delivered: u32,
+    warm_forwarded: u32,
+    last_verify_outcome: Option<String>,
+}
+
+#[derive(Serialize)]
+struct DeepLinkStatus {
+    pending_now: bool,
+    cold_delivered: u32,
+    warm_forwarded: u32,
+    last_verify_outcome: Option<String>,
+}
+
+impl DeepLinkLedger {
+    fn record_cold_delivery(&self) {
+        if let Ok(mut guard) = self.0.lock() {
+            guard.cold_delivered += 1;
+        }
+    }
+
+    fn record_warm_forward(&self) {
+        if let Ok(mut guard) = self.0.lock() {
+            guard.warm_forwarded += 1;
+        }
+    }
+
+    fn record_verify_outcome(&self, outcome: &str) {
+        if let Ok(mut guard) = self.0.lock() {
+            guard.last_verify_outcome = Some(outcome.to_string());
+        }
+    }
+
+    fn status(&self, pending_now: bool) -> DeepLinkStatus {
+        let guard = self.0.lock().ok();
+        let state = guard.as_deref();
+        DeepLinkStatus {
+            pending_now,
+            cold_delivered: state.map(|s| s.cold_delivered).unwrap_or(0),
+            warm_forwarded: state.map(|s| s.warm_forwarded).unwrap_or(0),
+            last_verify_outcome: state.and_then(|s| s.last_verify_outcome.clone()),
+        }
+    }
+}
+
 /// Extracts only the token value from a delivered focusboard:// link.
-fn token_from_link(url: &str) -> Option<String> {
+pub(crate) fn token_from_link(url: &str) -> Option<String> {
     let rest = url.trim().strip_prefix("focusboard://")?;
     let idx = rest.find("token=")?;
     let rest = &rest[idx + "token=".len()..];
@@ -190,6 +250,7 @@ fn spawn_deep_link_listener(app: tauri::AppHandle, data_dir: &Path) {
                 if token_from_link(&url).is_none() {
                     continue;
                 }
+                app.state::<DeepLinkLedger>().record_warm_forward();
                 let _ = app.emit(DEEP_LINK_EVENT, url);
                 if let Some(window) = app.get_webview_window("main") {
                     let _ = window.set_focus();
@@ -200,7 +261,7 @@ fn spawn_deep_link_listener(app: tauri::AppHandle, data_dir: &Path) {
     }
 }
 
-fn map_result<T, F>(state: &AppState, f: F) -> Result<T, CommandError>
+pub(crate) fn map_result<T, F>(state: &AppState, f: F) -> Result<T, CommandError>
 where
     F: FnOnce(&Store) -> CommandResult<T>,
 {
@@ -253,9 +314,24 @@ fn register(
 #[tauri::command]
 fn verify_email(
     state: tauri::State<AppState>,
+    ledger: tauri::State<DeepLinkLedger>,
     token: String,
 ) -> Result<auth::PublicUser, CommandError> {
-    map_result(&state, |s| auth::verify_email_token(s, &token))
+    match map_result(&state, |s| auth::verify_email_token(s, &token)) {
+        Ok(user) => {
+            ledger.record_verify_outcome("verified");
+            Ok(user)
+        }
+        Err(err) => {
+            if matches!(
+                err.code.as_str(),
+                "token_already_used" | "token_expired" | "invalid_token"
+            ) {
+                ledger.record_verify_outcome(&err.code);
+            }
+            Err(err)
+        }
+    }
 }
 
 #[tauri::command]
@@ -273,12 +349,27 @@ fn sign_out(state: tauri::State<AppState>) -> Result<(), CommandError> {
 }
 
 #[tauri::command]
-fn take_deep_link(state: tauri::State<PendingDeepLink>) -> Option<String> {
-    state
+fn take_deep_link(
+    pending: tauri::State<PendingDeepLink>,
+    ledger: tauri::State<DeepLinkLedger>,
+) -> Option<String> {
+    let url = pending
         .0
         .lock()
         .ok()
-        .and_then(|mut pending| pending.take().filter(|url| token_from_link(url).is_some()))
+        .and_then(|mut guard| guard.take().filter(|url| token_from_link(url).is_some()));
+    if url.is_some() {
+        ledger.record_cold_delivery();
+    }
+    url
+}
+
+#[tauri::command]
+fn deep_link_status(
+    pending: tauri::State<PendingDeepLink>,
+    ledger: tauri::State<DeepLinkLedger>,
+) -> DeepLinkStatus {
+    ledger.status(pending.peek())
 }
 
 #[tauri::command]
@@ -611,6 +702,8 @@ pub fn run() {
                 verify_base: VERIFY_BASE.to_string(),
             });
             register_scheme();
+            app.manage(DeepLinkLedger::default());
+            app.manage(golden_path::GoldenPathDrive::new());
             spawn_deep_link_listener(app.handle().clone(), &data_dir);
             // Cold activation: the link that launched us is handed to the
             // webview when it asks, so no token-dependent frame is missed.
@@ -645,7 +738,13 @@ pub fn run() {
             finish_focus_session,
             cancel_focus_session,
             list_focus_sessions,
-            active_focus_session
+            active_focus_session,
+            deep_link_status,
+            golden_path::golden_path_drive_start,
+            golden_path::golden_path_drive_register,
+            golden_path::golden_path_drive_consume_verification,
+            golden_path::golden_path_drive_sign_in,
+            golden_path::golden_path_check_reminder_email
         ])
         .run(tauri::generate_context!())
         .expect("error while running Focusboard");
@@ -867,6 +966,30 @@ mod tests {
         let signed_in = auth::sign_in(&store, "cold@example.com", "amber-harbor-6").unwrap();
         assert_eq!(signed_in.email, "cold@example.com");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn deeplink_ledger_tracks_delivery_and_outcomes_without_links() {
+        let ledger = DeepLinkLedger::default();
+        let status = ledger.status(true);
+        assert!(status.pending_now);
+        assert_eq!(status.cold_delivered, 0);
+        assert_eq!(status.warm_forwarded, 0);
+        assert_eq!(status.last_verify_outcome, None);
+
+        ledger.record_cold_delivery();
+        ledger.record_cold_delivery();
+        ledger.record_warm_forward();
+        ledger.record_verify_outcome("verified");
+        ledger.record_verify_outcome("token_already_used");
+        let status = ledger.status(false);
+        assert!(!status.pending_now);
+        assert_eq!(status.cold_delivered, 2);
+        assert_eq!(status.warm_forwarded, 1);
+        assert_eq!(
+            status.last_verify_outcome.as_deref(),
+            Some("token_already_used")
+        );
     }
 
     #[test]

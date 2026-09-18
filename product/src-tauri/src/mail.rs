@@ -29,6 +29,28 @@ impl MailSink {
         }
     }
 
+    /// Snapshot of every stored message. Callers must reduce the result to
+    /// booleans or outcomes before anything crosses IPC — message bodies and
+    /// action links carry the single-use tokens.
+    pub fn read_messages(&self) -> Vec<MailMessage> {
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return Vec::new();
+        };
+        let mut messages = Vec::new();
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(raw) = fs::read_to_string(&path) {
+                if let Ok(message) = serde_json::from_str::<MailMessage>(&raw) {
+                    messages.push(message);
+                }
+            }
+        }
+        messages
+    }
+
     pub fn deliver(&self, message: &MailMessage) -> Result<(), String> {
         fs::create_dir_all(&self.dir).map_err(|e| format!("mail sink unavailable: {e}"))?;
         let file_name = format!("{}.json", message.id);

@@ -14,6 +14,7 @@ import {
   VerifyEmailView,
   tokenFromLinkUrl,
 } from "./auth/AuthViews";
+import { GoldenPathProbe } from "./GoldenPathProbe";
 import { CalendarView } from "./views/CalendarView";
 import { FocusView } from "./views/FocusView";
 import { InboxView } from "./views/InboxView";
@@ -56,6 +57,25 @@ export default function App() {
   const [quickAddBusy, setQuickAddBusy] = useState(false);
   const quickAddRef = useRef<HTMLInputElement>(null);
   const signedIn = session.kind === "signedIn";
+
+  // Measurement gate for the section-3 first-run path: mounted in every
+  // session state, visually hidden, idle until a driver activates it.
+  const probe = (
+    <GoldenPathProbe
+      onAuthChange={(user) =>
+        user
+          ? setSession({ kind: "signedIn", user })
+          : setSession({
+              kind: "anonymous",
+              view: "sign-in",
+              email: "",
+              notice: null,
+              tokenFromLink: null,
+            })
+      }
+      visitView={(view) => setMainView(view)}
+    />
+  );
 
   const bootstrap = useCallback(async () => {
     try {
@@ -249,20 +269,25 @@ export default function App() {
 
   if (session.kind === "loading") {
     return (
-      <div className="auth-shell">
-        <div className="auth-welcome">
-          <p className="brand">
-            <Icon name="projects" size={22} /> Focusboard
-          </p>
+      <>
+        {probe}
+        <div className="auth-shell">
+          <div className="auth-welcome">
+            <p className="brand">
+              <Icon name="projects" size={22} /> Focusboard
+            </p>
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   if (session.kind === "anonymous") {
     const { view, email, notice, tokenFromLink } = session;
     return (
-      <div className="auth-shell">
+      <>
+        {probe}
+        <div className="auth-shell">
         <div className="auth-welcome">
           <p className="brand">
             <Icon name="projects" size={22} /> Focusboard
@@ -334,7 +359,8 @@ export default function App() {
             }
           />
         )}
-      </div>
+        </div>
+      </>
     );
   }
 
@@ -351,6 +377,7 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {probe}
       <aside className="sidebar">
         <p className="brand">
           <Icon name="projects" size={20} /> Focusboard

@@ -1090,3 +1090,33 @@ select:hover {
   font-size: 12.5px;
   color: var(--ink-faint);
 }
+
+/* Golden-path probe: mounted in every session state, visually hidden at all
+   viewports, yet hit-testable so a WebDriver pointer can reach the trigger. */
+.golden-path-probe {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  height: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.golden-path-probe button {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
+  pointer-events: auto;
+}
+
+.golden-path-probe-summary {
+  display: none;
+}
