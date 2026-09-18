@@ -520,6 +520,7 @@ export default function App() {
           <InboxView
             tasks={tasks}
             projects={projects ?? []}
+            timezone={session.user.timezone}
             error={listError}
             onRetry={() => void refreshLists()}
             onChanged={() => void refreshLists()}

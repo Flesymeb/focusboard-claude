@@ -25,7 +25,7 @@ pub struct Store {
     pub conn: Connection,
 }
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 const SCHEMA_V1: &str = "
     CREATE TABLE IF NOT EXISTS users (
@@ -146,6 +146,22 @@ const SCHEMA_V3: &str = "
     CREATE INDEX IF NOT EXISTS idx_auth_requests
         ON auth_requests(email, kind, requested_at);";
 
+/// v4 makes the task-depth model live: subtasks get their own ordered table
+/// so add, toggle, remove, and display survive restarts. Existing databases
+/// upgrade in place; tasks rows are untouched and keep their identity.
+const SCHEMA_V4: &str = "
+    CREATE TABLE subtasks (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        done INTEGER NOT NULL DEFAULT 0,
+        position INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_subtasks_task ON subtasks(task_id, position);";
+
 impl Store {
     pub fn open(path: &Path) -> Result<Self, rusqlite::Error> {
         let conn = Connection::open(path)?;
@@ -171,6 +187,10 @@ impl Store {
         if version < 3 {
             self.conn
                 .execute_batch(&format!("BEGIN; {SCHEMA_V3} COMMIT;"))?;
+        }
+        if version < 4 {
+            self.conn
+                .execute_batch(&format!("BEGIN; {SCHEMA_V4} COMMIT;"))?;
         }
         if version < SCHEMA_VERSION {
             self.conn
@@ -243,7 +263,7 @@ mod tests {
         let dir = temp_dir("fresh");
         let store = Store::open(&dir.join("focusboard.sqlite3")).unwrap();
         assert_eq!(user_version(&store.conn), SCHEMA_VERSION);
-        for table in ["reminders", "focus_sessions", "activity_events"] {
+        for table in ["reminders", "focus_sessions", "activity_events", "subtasks"] {
             let n: i64 = store
                 .conn
                 .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))
@@ -311,6 +331,16 @@ mod tests {
             )
             .unwrap();
         assert_eq!(notify, 1);
+
+        // The v4 subtask table accepts rows for the migrated task.
+        store
+            .conn
+            .execute(
+                "INSERT INTO subtasks(id, task_id, user_id, title, position, created_at, updated_at)
+                 VALUES('s1', 't1', 'u1', 'Outline the demo', 0, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
         drop(store);
 
         // Reopening an already-migrated database is a no-op, not a re-run.
@@ -321,6 +351,50 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM reminders", [], |r| r.get(0))
             .unwrap();
         assert_eq!(reminders, 1);
+        let subtasks: i64 = reopened
+            .conn
+            .query_row("SELECT COUNT(*) FROM subtasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(subtasks, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn existing_v3_database_gains_subtasks_without_data_loss() {
+        let dir = temp_dir("upgrade-v3");
+        let db = dir.join("focusboard.sqlite3");
+        {
+            // Build a genuine v3 database by running v1+v2+v3 only.
+            let conn = Connection::open(&db).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch(SCHEMA_V2).unwrap();
+            conn.execute_batch(SCHEMA_V3).unwrap();
+            conn.pragma_update(None, "user_version", 3).unwrap();
+            conn.execute(
+                "INSERT INTO users(id, email, password_hash, display_name, status, created_at)
+                 VALUES('u1', 'grace@example.com', 'hash', 'Grace', 'active', '2026-02-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks(id, user_id, title, status, priority, position, created_at, updated_at)
+                 VALUES('t1', 'u1', 'Ship the board', 'in_progress', 'high', 0, '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z')",
+                [],
+            )
+            .unwrap();
+        }
+        let store = Store::open(&db).unwrap();
+        assert_eq!(user_version(&store.conn), SCHEMA_VERSION);
+        let status: String = store
+            .conn
+            .query_row("SELECT status FROM tasks WHERE id = 't1'", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(status, "in_progress");
+        let subtasks: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM subtasks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(subtasks, 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -29,6 +29,23 @@ export interface Task {
   updated_at: string;
 }
 
+export interface Subtask {
+  id: string;
+  task_id: string;
+  title: string;
+  done: boolean;
+  position: number;
+}
+
+export interface ActivityEvent {
+  id: string;
+  entity_id: string;
+  entity_type: string;
+  event_type: string;
+  summary: string;
+  created_at: string;
+}
+
 export interface Reminder {
   id: string;
   task_id: string;

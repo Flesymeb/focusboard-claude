@@ -1,3 +1,4 @@
+mod activity;
 mod auth;
 mod focus;
 mod golden_path;
@@ -487,6 +488,24 @@ fn list_projects(state: tauri::State<AppState>) -> Result<Vec<tasks::Project>, C
 }
 
 #[tauri::command]
+fn list_archived_projects(
+    state: tauri::State<AppState>,
+) -> Result<Vec<tasks::Project>, CommandError> {
+    require_then(&state, |s, u| tasks::list_archived_projects(s, u))
+}
+
+#[tauri::command]
+fn set_project_archived(
+    state: tauri::State<AppState>,
+    project_id: String,
+    archived: bool,
+) -> Result<tasks::Project, CommandError> {
+    require_then(&state, |s, u| {
+        tasks::set_project_archived(s, u, &project_id, archived)
+    })
+}
+
+#[tauri::command]
 fn create_task(
     state: tauri::State<AppState>,
     title: String,
@@ -534,6 +553,87 @@ fn set_task_status(
     require_then(&state, |s, u| {
         tasks::update_task(s, u, &task_id, None, None, Some(&status))
     })
+}
+
+#[tauri::command]
+fn set_task_priority(
+    state: tauri::State<AppState>,
+    task_id: String,
+    priority: String,
+) -> Result<tasks::Task, CommandError> {
+    require_then(&state, |s, u| {
+        tasks::set_task_priority(s, u, &task_id, &priority)
+    })
+}
+
+#[tauri::command]
+fn query_tasks(
+    state: tauri::State<AppState>,
+    search: Option<String>,
+    priority: Option<String>,
+    due: Option<String>,
+    status: Option<String>,
+    today: Option<String>,
+) -> Result<Vec<tasks::Task>, CommandError> {
+    require_then(&state, |s, u| {
+        tasks::query_tasks(
+            s,
+            u,
+            search.as_deref(),
+            priority.as_deref(),
+            due.as_deref(),
+            status.as_deref(),
+            today.as_deref(),
+        )
+    })
+}
+
+#[tauri::command]
+fn list_subtasks(
+    state: tauri::State<AppState>,
+    task_id: String,
+) -> Result<Vec<tasks::Subtask>, CommandError> {
+    require_then(&state, |s, u| tasks::list_subtasks(s, u, &task_id))
+}
+
+#[tauri::command]
+fn add_subtask(
+    state: tauri::State<AppState>,
+    task_id: String,
+    title: String,
+) -> Result<tasks::Subtask, CommandError> {
+    require_then(&state, |s, u| tasks::add_subtask(s, u, &task_id, &title))
+}
+
+#[tauri::command]
+fn set_subtask_done(
+    state: tauri::State<AppState>,
+    task_id: String,
+    subtask_id: String,
+    done: bool,
+) -> Result<tasks::Subtask, CommandError> {
+    require_then(&state, |s, u| {
+        tasks::set_subtask_done(s, u, &task_id, &subtask_id, done)
+    })
+}
+
+#[tauri::command]
+fn remove_subtask(
+    state: tauri::State<AppState>,
+    task_id: String,
+    subtask_id: String,
+) -> Result<(), CommandError> {
+    require_then(&state, |s, u| {
+        tasks::remove_subtask(s, u, &task_id, &subtask_id)
+    })
+}
+
+#[tauri::command]
+fn list_task_activity(
+    state: tauri::State<AppState>,
+    task_id: String,
+) -> Result<Vec<activity::ActivityEvent>, CommandError> {
+    require_then(&state, |s, u| activity::list_for_task(s, u, &task_id))
 }
 
 #[tauri::command]
@@ -804,11 +904,20 @@ pub fn run() {
             create_project,
             rename_project,
             list_projects,
+            list_archived_projects,
+            set_project_archived,
             create_task,
             list_tasks,
+            query_tasks,
             assign_task,
             set_task_due,
             set_task_status,
+            set_task_priority,
+            list_subtasks,
+            add_subtask,
+            set_subtask_done,
+            remove_subtask,
+            list_task_activity,
             set_task_reminder,
             list_reminders,
             retry_reminder,

@@ -1,13 +1,155 @@
 import { useEffect, useState } from "react";
 import {
+  ActivityEvent,
   COMMON_TIMEZONES,
   Project,
   Reminder,
+  Subtask,
   Task,
   invoke,
   toCommandError,
 } from "../api";
 import { Icon } from "../ui";
+
+const PRIORITIES = ["low", "normal", "high"] as const;
+
+/**
+ * Task detail pane: subtasks and the concise per-task history. Both lists
+ * refetch after every mutation so the history always shows what just happened.
+ */
+function TaskDetail(props: { task: Task; onChanged: () => void; version: number }) {
+  const { task } = props;
+  const [subtasks, setSubtasks] = useState<Subtask[] | null>(null);
+  const [events, setEvents] = useState<ActivityEvent[] | null>(null);
+  const [draft, setDraft] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setSubtasks(null);
+    setEvents(null);
+    invoke<Subtask[]>("list_subtasks", { taskId: task.id })
+      .then((rows) => alive && setSubtasks(rows))
+      .catch((err) => alive && setError(toCommandError(err).message));
+    invoke<ActivityEvent[]>("list_task_activity", { taskId: task.id })
+      .then((rows) => alive && setEvents(rows))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [task.id, props.version]);
+
+  async function run(fn: () => Promise<unknown>) {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+      props.onChanged();
+    } catch (err) {
+      setError(toCommandError(err).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const addSubtask = () => {
+    const title = draft.trim();
+    if (!title) return;
+    void run(async () => {
+      await invoke("add_subtask", { taskId: task.id, title });
+      setDraft("");
+    });
+  };
+
+  return (
+    <div className="task-detail" data-testid="task-detail">
+      <section className="task-subtasks" aria-label={`Subtasks for ${task.title}`}>
+        <h3 className="detail-heading">Subtasks</h3>
+        {subtasks === null ? (
+          <p className="section-note">Loading subtasks…</p>
+        ) : subtasks.length === 0 ? (
+          <p className="section-note">No subtasks yet — break the work into steps below.</p>
+        ) : (
+          <ul className="subtask-list">
+            {subtasks.map((s) => (
+              <li key={s.id} className="subtask-row" data-testid="subtask-row" data-subtask-done={s.done}>
+                <button
+                  type="button"
+                  className="task-check small"
+                  onClick={() => void run(() => invoke("set_subtask_done", { taskId: task.id, subtaskId: s.id, done: !s.done }))}
+                  disabled={busy}
+                  data-testid="subtask-check"
+                  aria-label={s.done ? `Reopen ${s.title}` : `Complete ${s.title}`}
+                >
+                  {s.done ? <Icon name="check" size={12} /> : null}
+                </button>
+                <span className="subtask-title">{s.title}</span>
+                <button
+                  type="button"
+                  className="link danger"
+                  onClick={() => void run(() => invoke("remove_subtask", { taskId: task.id, subtaskId: s.id }))}
+                  disabled={busy}
+                  data-testid="subtask-remove"
+                  aria-label={`Remove subtask ${s.title}`}
+                >
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <form
+          className="subtask-add"
+          onSubmit={(e) => {
+            e.preventDefault();
+            addSubtask();
+          }}
+        >
+          <label className="visually-hidden" htmlFor={`subtask-input-${task.id}`}>
+            New subtask title
+          </label>
+          <input
+            id={`subtask-input-${task.id}`}
+            type="text"
+            placeholder="Add a subtask"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            disabled={busy}
+            data-testid="subtask-input"
+          />
+          <button type="submit" className="button small" disabled={busy || !draft.trim()} data-testid="subtask-add">
+            <Icon name="plus" size={13} /> Add
+          </button>
+        </form>
+      </section>
+      <section className="task-history" aria-label={`History for ${task.title}`}>
+        <h3 className="detail-heading">History</h3>
+        {events === null ? (
+          <p className="section-note">Loading history…</p>
+        ) : events.length === 0 ? (
+          <p className="section-note">No changes recorded yet.</p>
+        ) : (
+          <ul className="activity-list" data-testid="activity-history">
+            {events.map((e) => (
+              <li key={e.id} className="activity-row" data-activity-type={e.event_type}>
+                <span className="activity-summary">{e.summary}</span>
+                <time className="activity-time" dateTime={e.created_at}>
+                  {e.created_at.replace("T", " ").slice(0, 16)}
+                </time>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      {error ? (
+        <p className="field-error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 /**
  * A single task row. Mutations are optimistic but every failure reverts the
@@ -20,6 +162,7 @@ export function TaskRow(props: {
   onChanged: () => void;
   showProject?: boolean;
   showDue?: boolean;
+  showPriority?: boolean;
   showReminder?: boolean;
   reminder?: Reminder | null;
   defaultTimezone?: string;
@@ -29,6 +172,9 @@ export function TaskRow(props: {
   const [busy, setBusy] = useState(false);
   const [projectValue, setProjectValue] = useState(task.project_id ?? "");
   const [dueValue, setDueValue] = useState(task.due_date ?? "");
+  const [priorityValue, setPriorityValue] = useState(task.priority);
+  const [detailOpen, setDetailOpen] = useState(false);
+  const [version, setVersion] = useState(0);
   const [reminderTime, setReminderTime] = useState("");
   const [reminderTz, setReminderTz] = useState(props.defaultTimezone || "UTC");
   const [reminderNote, setReminderNote] = useState<string | null>(null);
@@ -36,7 +182,8 @@ export function TaskRow(props: {
   useEffect(() => {
     setProjectValue(task.project_id ?? "");
     setDueValue(task.due_date ?? "");
-  }, [task.project_id, task.due_date]);
+    setPriorityValue(task.priority);
+  }, [task.project_id, task.due_date, task.priority]);
 
   const reminder = props.reminder ?? null;
   useEffect(() => {
@@ -56,6 +203,7 @@ export function TaskRow(props: {
     try {
       await fn();
       onChanged();
+      setVersion((v) => v + 1);
     } catch (err) {
       setError(toCommandError(err).message);
       revert();
@@ -92,6 +240,15 @@ export function TaskRow(props: {
     );
   };
 
+  const setPriority = (value: string) => {
+    const previous = priorityValue;
+    setPriorityValue(value);
+    mutate(
+      () => invoke("set_task_priority", { taskId: task.id, priority: value }),
+      () => setPriorityValue(previous)
+    );
+  };
+
   const applyReminder = () => {
     if (!reminderTime || !dueValue) {
       setError("A reminder needs a due date and a time.");
@@ -111,9 +268,10 @@ export function TaskRow(props: {
 
   const done = task.status === "completed";
   const showReminder = props.showReminder ?? true;
+  const showPriority = props.showPriority ?? true;
 
   return (
-    <li className={`task-row${done ? " done" : ""}`} data-task-id={task.id} data-testid="task-row">
+    <li className={`task-row${done ? " done" : ""}`} data-task-id={task.id} data-testid="task-row" data-status={task.status} data-priority={task.priority}>
       <button
         type="button"
         className="task-check"
@@ -125,7 +283,32 @@ export function TaskRow(props: {
         {done ? <Icon name="check" size={14} /> : null}
       </button>
       <div className="task-main">
-        <span className="task-title">{task.title}</span>
+        <button
+          type="button"
+          className="task-title detail-toggle"
+          onClick={() => setDetailOpen((open) => !open)}
+          aria-expanded={detailOpen}
+          data-testid="task-detail-toggle"
+        >
+          {task.title}
+        </button>
+        {showPriority && (
+          <label className="task-priority">
+            <span className="visually-hidden">Priority for {task.title}</span>
+            <select
+              value={priorityValue}
+              onChange={(e) => setPriority(e.target.value)}
+              disabled={busy}
+              data-testid="task-priority"
+            >
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>
+                  {p === "low" ? "Low priority" : p === "normal" ? "Normal priority" : "High priority"}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
         {(props.showProject ?? true) && (
           <label className="task-assign">
             <span className="visually-hidden">Project for {task.title}</span>
@@ -211,6 +394,9 @@ export function TaskRow(props: {
               <span className="reminder-state">{reminderNote}</span>
             ) : null}
           </span>
+        )}
+        {detailOpen && (
+          <TaskDetail task={task} onChanged={onChanged} version={version} />
         )}
       </div>
       {error ? (
