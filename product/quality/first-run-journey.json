@@ -1,0 +1,407 @@
+{
+  "schema_version": 1,
+  "manifest_id": "first-run-journey",
+  "product_id": "focusboard",
+  "title": "PRD section 3 complete first-run journey manifest",
+  "authority": "developer-owned advisory measurement infrastructure. The manifest declaratively describes how an external WebDriver lane drives the whole journey; the journey verdict itself belongs to the host collector, never to the developer.",
+  "source": {
+    "prd": "config/PRD.md",
+    "section": "3. Complete first-run path",
+    "prd_step_range": [1, 11],
+    "recovery_states": [
+      "forgot_password",
+      "email_link_reset",
+      "sign_in_new_password",
+      "expired_link_recovery"
+    ]
+  },
+  "isolation": {
+    "profile_environment": "FOCUSBOARD_DATA_DIR",
+    "rule": "The driver launches the app with FOCUSBOARD_DATA_DIR pointing at one fresh, empty per-run directory. All state (SQLite store, mail sink, sessions) lives inside it, so the run cannot observe or mutate any normal user profile.",
+    "default_startup_behavior": "none. The app creates no account, session, or data mutation on startup; every driven action is an explicit step below.",
+    "opt_in_gates_preserved": [
+      "hidden non-focusable #golden-path-trigger button (tabIndex=-1, aria-hidden) is the only drive starter",
+      "backend drive steps refuse with drive_not_started until golden_path_drive_start ran explicitly",
+      "reminder-email probe returns booleans only, never message content"
+    ]
+  },
+  "action_link_retrieval": {
+    "mechanism": "mail-sink-file-read",
+    "opt_in_contract": "Opt-in by launching the app with FOCUSBOARD_DATA_DIR set to a fresh per-run directory. There is no default-startup mail export, no network delivery, and no normal-profile contact; the sink exists only inside the isolated profile and is written by the product's normal send path.",
+    "data_dir_discovery": {
+      "ipc": "invoke store_location -> { identifier, data_dir, sqlite_file }",
+      "dom": "data-store-data-dir attribute on #golden-path-probe"
+    },
+    "paths": {
+      "per_message": "<data_dir>/mail-sink/<message-id>.json",
+      "outbox_log": "<data_dir>/mail-sink/outbox.jsonl"
+    },
+    "record_format": {
+      "encoding": "UTF-8 JSON, one object per message file; outbox.jsonl is one JSON object per line in delivery order",
+      "fields": ["id", "to", "subject", "body_text", "action_url", "created_at"]
+    },
+    "link_kinds": {
+      "verification": {
+        "subject": "Verify your Focusboard email",
+        "action_url_pattern": "^focusboard://auth/verify\\?token=[A-Za-z0-9]+$",
+        "single_use": true,
+        "expiry": "24 hours"
+      },
+      "reset": {
+        "subject": "Reset your Focusboard password",
+        "action_url_pattern": "^focusboard://auth/reset\\?token=[A-Za-z0-9]+$",
+        "single_use": true,
+        "expiry": "60 minutes"
+      },
+      "reminder": {
+        "subject_prefix": "Focusboard reminder:",
+        "action_url_pattern": "^focusboard://task\\?id=[A-Za-z0-9_-]+$",
+        "single_use": false,
+        "token_free": true
+      }
+    }
+  },
+  "host_lane_dependencies": [
+    "Registering a manifest-consuming journey stage in the host focusboard-native-webdriver scenario (Host follow-up; outside developer write targets).",
+    "Out-of-process focusboard:// link activation (OS handler / mail client): structurally unavailable in this harness; waived for the external-activation receipt lane. The in-app paste affordance (steps follow_verification_link, reset_open_link) keeps these steps drivable without it."
+  ],
+  "typed_value_templates": {
+    "display_name": "Journey User",
+    "email": "journey-{run_id}@example.com",
+    "password": "journey-{run_id}-7x{run_id}",
+    "new_password": "renewed-{run_id}-7q{run_id}",
+    "project_name": "Launch plan",
+    "task_title": "Prepare first demo",
+    "due_date": "{today_local}",
+    "reminder_time": "{now_plus_0_minutes_local_HH:mm}",
+    "timezone": "{account_timezone}"
+  },
+  "steps": [
+    {
+      "id": "landing_shell",
+      "prd_step": 1,
+      "title": "Open the landing/auth shell",
+      "driver": "external_webdriver",
+      "action": "launch_app",
+      "locator": { "strategy": "css", "selector": "section.auth-panel h1#signin-title" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Auth shell renders the sign-in panel with heading 'Sign in with email'.",
+        "observable": "h1#signin-title text equals 'Sign in with email'"
+      },
+      "screenshot": { "checkpoint": "01-landing-shell" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "open_create_account",
+      "prd_step": 2,
+      "title": "Choose Create account",
+      "driver": "external_webdriver",
+      "action": "click",
+      "locator": { "strategy": "css", "selector": "section.auth-panel button.link" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Create-account panel renders.",
+        "observable": "h1#create-title text equals 'Create your account'"
+      },
+      "screenshot": { "checkpoint": "02-create-account-form" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "submit_registration",
+      "prd_step": 2,
+      "title": "Submit a valid email and password",
+      "driver": "external_webdriver",
+      "action": "type_and_submit",
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#create-name", "template": "{display_name}" },
+        { "selector": "#create-email", "template": "{email}" },
+        { "selector": "#create-password", "template": "{password}" }
+      ],
+      "expected_state": {
+        "description": "Registration accepted; app shows the check-your-email panel.",
+        "observable": "h1#verify-title text equals 'Check your email'"
+      },
+      "screenshot": { "checkpoint": "03-check-your-email" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "retrieve_verification_link",
+      "prd_step": 3,
+      "title": "Retrieve the verification email action link",
+      "driver": "external_host",
+      "action": "read_mail_sink",
+      "link_kind": "verification",
+      "recipient_template": "{email}",
+      "locator": { "strategy": "filesystem", "selector": "<data_dir>/mail-sink/outbox.jsonl" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Exactly the action_link_retrieval record exists whose to matches {email} and whose action_url matches the verification pattern; its token is extracted for the next step.",
+        "observable": "one verification record found for {email}"
+      },
+      "screenshot": { "checkpoint": null },
+      "drive_status": "externally_drivable",
+      "notes": "Pure filesystem read of the isolated profile; no IPC, no DOM probe, no default-startup behavior."
+    },
+    {
+      "id": "follow_verification_link",
+      "prd_step": 3,
+      "title": "Follow the verification link and return to the application",
+      "driver": "external_webdriver",
+      "action": "type_and_submit",
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#verify-token", "template": "{verification_link}" }
+      ],
+      "expected_state": {
+        "description": "Verification accepted; the app returns to the sign-in panel.",
+        "observable": "h1#signin-title visible with a success notice in .auth-notice[role=status]"
+      },
+      "screenshot": { "checkpoint": "04-verified-sign-in" },
+      "drive_status": "externally_drivable",
+      "notes": "Driven through the real paste-link affordance. Out-of-process focusboard:// activation is host-lane-dependent and waived (see host_lane_dependencies)."
+    },
+    {
+      "id": "sign_in_refresh_persist",
+      "prd_step": 4,
+      "title": "Sign in and remain signed in after a page refresh",
+      "driver": "external_webdriver",
+      "action": "type_submit_and_reload",
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#signin-email", "template": "{email}" },
+        { "selector": "#signin-password", "template": "{password}" }
+      ],
+      "expected_state": {
+        "description": "Signed in; after a webview reload the session restores to the Today surface with the six primary nav items.",
+        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today' after reload"
+      },
+      "screenshot": { "checkpoint": "05-signed-in-today" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "create_project",
+      "prd_step": 5,
+      "title": "Create a project named 'Launch plan' with a restrained accent",
+      "driver": "external_webdriver",
+      "action": "click_type_and_submit",
+      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-projects]" },
+      "locator": { "strategy": "css", "selector": "form.inline-create" },
+      "typed_values": [
+        { "selector": "#project-name", "template": "{project_name}" }
+      ],
+      "expected_state": {
+        "description": "Project board lists the new project with one of the product's restrained palette accents.",
+        "observable": "[data-testid=project-board] .accent-dot matches accent-(amber|olive|clay|slate|moss|plum)"
+      },
+      "screenshot": { "checkpoint": "06-project-board" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "create_task",
+      "prd_step": 6,
+      "title": "Create the task, assign it, set due date, reminder time and timezone",
+      "driver": "external_webdriver",
+      "action": "type_submit_and_configure",
+      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-today]" },
+      "locator": { "strategy": "css", "selector": "form.quick-add" },
+      "typed_values": [
+        { "selector": "#quick-add-input", "template": "{task_title}" },
+        { "selector": "[data-testid=task-detail-toggle]", "template": null },
+        { "selector": "[data-testid=task-row] label.task-assign select", "template": "{project_name}" },
+        { "selector": "[data-testid=task-row] label.task-due input[type=date]", "template": "{due_date}" },
+        { "selector": "[data-testid=reminder-time]", "template": "{reminder_time}" },
+        { "selector": "[data-testid=reminder-timezone]", "template": "{timezone}" }
+      ],
+      "expected_state": {
+        "description": "Task row carries the project assignment, due date, and a scheduled reminder.",
+        "observable": "[data-testid=task-row][data-status=todo] exists with detail values set"
+      },
+      "screenshot": { "checkpoint": "07-task-configured" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "verify_views_presence",
+      "prd_step": 7,
+      "title": "Confirm the task appears in Inbox, Today, Projects, and the Calendar date",
+      "driver": "external_webdriver",
+      "action": "visit_views_and_assert",
+      "locator": { "strategy": "css", "selector": "[data-testid=nav-inbox], [data-testid=nav-today], [data-testid=nav-projects], [data-testid=nav-calendar]" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Inbox lists the task; Today lists it under its due date; the Projects board shows it in the project column; the Calendar agenda/grid shows it on {due_date}.",
+        "observable": "[data-testid=task-row] with title {task_title} present in each of the four views"
+      },
+      "screenshot": { "checkpoint": "08-views-presence" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "focus_cycle",
+      "prd_step": 8,
+      "title": "Start a focus session, pause, resume, and complete the task",
+      "driver": "external_webdriver",
+      "action": "click_sequence",
+      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-focus]" },
+      "locator": { "strategy": "css", "selector": "[data-testid=focus-active]" },
+      "typed_values": [
+        { "selector": "[data-testid=focus-task-select]", "template": "{task_title}" },
+        { "selector": "[data-testid=focus-start]", "template": null },
+        { "selector": "[data-testid=focus-pause]", "template": null },
+        { "selector": "[data-testid=focus-resume]", "template": null },
+        { "selector": "[data-testid=focus-finish]", "template": null }
+      ],
+      "expected_state": {
+        "description": "Session reaches running, paused, running again, then completed.",
+        "observable": "[data-testid=focus-active] data-focus-state passes running -> paused -> running -> completed"
+      },
+      "screenshot": { "checkpoint": "09-focus-completed" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "complete_task_once",
+      "prd_step": 9,
+      "title": "Confirm the task is completed exactly once and the daily summary updates",
+      "driver": "external_webdriver",
+      "action": "click_and_assert",
+      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-today]" },
+      "locator": { "strategy": "css", "selector": "[data-testid=task-row][data-status=completed]" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Exactly one completed row for the task; the Today daily summary reflects one completed focus session for the day.",
+        "observable": "one [data-testid=task-row][data-status=completed] and no duplicate rows"
+      },
+      "screenshot": { "checkpoint": "10-completed-summary" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "retrieve_reminder_link",
+      "prd_step": 10,
+      "title": "Confirm the reminder email with task title, due context, and safe task link",
+      "driver": "external_host",
+      "action": "read_mail_sink",
+      "link_kind": "reminder",
+      "recipient_template": "{email}",
+      "locator": { "strategy": "filesystem", "selector": "<data_dir>/mail-sink/outbox.jsonl" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "A reminder record exists addressed to {email} whose subject contains the task title, whose body carries the due context, and whose action_url matches focusboard://task?id= with no token.",
+        "observable": "one reminder record matching all three content predicates"
+      },
+      "screenshot": { "checkpoint": null },
+      "drive_status": "externally_drivable",
+      "notes": "The reminder is triggered at its scheduled instant by the app's reminder tick; the scheduled time template {reminder_time} resolves to the current minute so delivery happens during the run."
+    },
+    {
+      "id": "sign_out_sign_in_persist",
+      "prd_step": 11,
+      "title": "Log out, sign back in, confirm task and completion state persist",
+      "driver": "external_webdriver",
+      "action": "click_type_and_assert",
+      "locator": { "strategy": "css", "selector": "aside.sidebar .sidebar-footer button.nav-item" },
+      "typed_values": [
+        { "selector": "#signin-email", "template": "{email}" },
+        { "selector": "#signin-password", "template": "{password}" }
+      ],
+      "expected_state": {
+        "description": "After sign-out the auth shell renders; after signing back in, Today still lists the completed task.",
+        "observable": "h1#signin-title after sign-out, then [data-testid=task-row][data-status=completed] after sign-in"
+      },
+      "screenshot": { "checkpoint": "11-persisted-after-sign-in" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "forgot_password",
+      "prd_step": null,
+      "recovery_state": "forgot_password",
+      "title": "Request a password reset from the sign-in panel",
+      "driver": "external_webdriver",
+      "action": "click_type_and_submit",
+      "pre_locator": { "strategy": "css", "selector": "section.auth-panel button.link" },
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#forgot-email", "template": "{email}" }
+      ],
+      "expected_state": {
+        "description": "Forgot-password panel accepts the email; a check-your-email confirmation renders.",
+        "observable": "h1#forgot-sent-title text equals 'Check your email'"
+      },
+      "screenshot": { "checkpoint": "12-forgot-sent" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "retrieve_reset_link",
+      "prd_step": null,
+      "recovery_state": "email_link_reset",
+      "title": "Retrieve the reset email action link",
+      "driver": "external_host",
+      "action": "read_mail_sink",
+      "link_kind": "reset",
+      "recipient_template": "{email}",
+      "locator": { "strategy": "filesystem", "selector": "<data_dir>/mail-sink/outbox.jsonl" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "A reset record exists for {email} whose action_url matches the reset pattern; its token is extracted.",
+        "observable": "one reset record found for {email}"
+      },
+      "screenshot": { "checkpoint": null },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "reset_open_link",
+      "prd_step": null,
+      "recovery_state": "email_link_reset",
+      "title": "Open the reset link and set a new password",
+      "driver": "external_webdriver",
+      "action": "drive_reset_link_and_submit",
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#reset-password", "template": "{new_password}" }
+      ],
+      "expected_state": {
+        "description": "The reset link opens the set-new-password panel; submitting updates the password.",
+        "observable": "h1#reset-form-title 'Set a new password', then h1#reset-done-title 'Password updated'"
+      },
+      "screenshot": { "checkpoint": "13-password-updated" },
+      "drive_status": "externally_drivable",
+      "notes": "The app routes an activation link delivered in the webview URL hash (any '#...reset?token=...' hash) to the reset surface, so the driver follows the link by navigating the webview URL — a real navigation, not a DOM probe. Out-of-process focusboard:// activation stays host-lane-dependent and waived."
+    },
+    {
+      "id": "sign_in_new_password",
+      "prd_step": null,
+      "recovery_state": "sign_in_new_password",
+      "title": "Sign in with the new password",
+      "driver": "external_webdriver",
+      "action": "click_type_and_submit",
+      "pre_locator": { "strategy": "css", "selector": "section.auth-panel button.button.primary.block" },
+      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
+      "typed_values": [
+        { "selector": "#signin-email", "template": "{email}" },
+        { "selector": "#signin-password", "template": "{new_password}" }
+      ],
+      "expected_state": {
+        "description": "The new password signs in; the app shell renders.",
+        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today'"
+      },
+      "screenshot": { "checkpoint": "14-signed-in-new-password" },
+      "drive_status": "externally_drivable"
+    },
+    {
+      "id": "expired_link_recovery",
+      "prd_step": null,
+      "recovery_state": "expired_link_recovery",
+      "title": "An expired or already-used reset link lands in an honest recovery state",
+      "driver": "external_webdriver",
+      "action": "drive_reset_link_and_assert",
+      "locator": { "strategy": "css", "selector": "section.auth-panel h1#reset-title" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "A spent or expired reset token renders the invalid/expired panel, and the recovery affordance requests a fresh link back to the check-your-email state.",
+        "observable": "h1#reset-title matches 'isn't valid|expired|already used', then clicking 'Request a fresh link' returns to the forgot-sent state"
+      },
+      "screenshot": { "checkpoint": "15-expired-link-recovery" },
+      "drive_status": "externally_drivable",
+      "notes": "Expired-token fixture: reuse the token consumed by reset_open_link, or request a reset and let the 60-minute expiry lapse in a seeded store. Reuse of a single-use token is the drivable equivalent."
+    }
+  ]
+}

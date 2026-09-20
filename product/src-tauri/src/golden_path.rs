@@ -284,4 +284,197 @@ mod tests {
         assert!(!missing.addressed_to_drive_account);
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    // --- Journey manifest validation (quality/first-run-journey.json) ---
+
+    fn journey_manifest() -> serde_json::Value {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../quality/first-run-journey.json");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("journey manifest must exist at {path:?}: {e}"));
+        serde_json::from_str(&raw).expect("journey manifest must parse as JSON")
+    }
+
+    /// Every step declares a locator strategy and selector, an expected
+    /// observable state, and — for UI-driven steps — a screenshot checkpoint.
+    #[test]
+    fn journey_manifest_steps_are_fully_declared() {
+        let manifest = journey_manifest();
+        let steps = manifest["steps"].as_array().expect("steps array");
+        assert!(!steps.is_empty(), "manifest must declare steps");
+        let mut ids = std::collections::BTreeSet::new();
+        for step in steps {
+            let id = step["id"].as_str().expect("step id");
+            assert!(ids.insert(id.to_string()), "duplicate step id {id}");
+            let locator = &step["locator"];
+            assert!(
+                locator["strategy"].as_str().is_some_and(|s| !s.is_empty()),
+                "step {id} lacks locator.strategy"
+            );
+            assert!(
+                locator["selector"].as_str().is_some_and(|s| !s.is_empty()),
+                "step {id} lacks locator.selector"
+            );
+            assert!(
+                step["expected_state"]["observable"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()),
+                "step {id} lacks an expected observable state"
+            );
+            let ui_driven = step["driver"].as_str() == Some("external_webdriver");
+            let checkpoint = step["screenshot"]["checkpoint"].as_str();
+            if ui_driven {
+                assert!(
+                    checkpoint.is_some_and(|s| !s.is_empty()),
+                    "ui step {id} lacks a screenshot checkpoint"
+                );
+            }
+            if let Some(values) = step["typed_values"].as_array() {
+                for value in values {
+                    assert!(
+                        value["selector"].as_str().is_some_and(|s| !s.is_empty()),
+                        "step {id} has a typed value without a selector"
+                    );
+                    assert!(
+                        value["template"].is_null()
+                            || value["template"].as_str().is_some_and(|s| !s.is_empty()),
+                        "step {id} has an empty typed-value template"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The manifest declaratively covers every PRD section 3 step plus the
+    /// forgot, reset, sign-in-with-new-password, and expired-link recovery
+    /// states.
+    #[test]
+    fn journey_manifest_covers_prd_section3_and_recovery() {
+        let manifest = journey_manifest();
+        let steps = manifest["steps"].as_array().expect("steps array");
+        let covered_prd: std::collections::BTreeSet<u64> = steps
+            .iter()
+            .filter_map(|s| s["prd_step"].as_u64())
+            .collect();
+        for prd_step in 1..=11 {
+            assert!(
+                covered_prd.contains(&prd_step),
+                "manifest does not cover PRD section 3 step {prd_step}"
+            );
+        }
+        let recovery: std::collections::BTreeSet<&str> = steps
+            .iter()
+            .filter_map(|s| s["recovery_state"].as_str())
+            .collect();
+        for state in [
+            "forgot_password",
+            "email_link_reset",
+            "sign_in_new_password",
+            "expired_link_recovery",
+        ] {
+            assert!(
+                recovery.contains(state),
+                "manifest lacks recovery state {state}"
+            );
+        }
+    }
+
+    /// The documented action-link retrieval must be the isolated mail-sink
+    /// file read: opt-in via a fresh FOCUSBOARD_DATA_DIR profile, covering
+    /// verification, reset, and reminder link kinds.
+    #[test]
+    fn journey_manifest_documents_isolated_link_retrieval() {
+        let manifest = journey_manifest();
+        let retrieval = &manifest["action_link_retrieval"];
+        assert_eq!(retrieval["mechanism"].as_str(), Some("mail-sink-file-read"));
+        let isolation = manifest["isolation"]["profile_environment"]
+            .as_str()
+            .expect("isolation profile environment");
+        assert_eq!(isolation, "FOCUSBOARD_DATA_DIR");
+        let opt_in = retrieval["opt_in_contract"].as_str().unwrap_or_default();
+        assert!(
+            opt_in.contains("FOCUSBOARD_DATA_DIR"),
+            "opt-in contract must name the isolated profile environment"
+        );
+        for kind in ["verification", "reset", "reminder"] {
+            let entry = &retrieval["link_kinds"][kind];
+            assert!(
+                entry["action_url_pattern"]
+                    .as_str()
+                    .is_some_and(|s| !s.is_empty()),
+                "link kind {kind} lacks an action_url_pattern"
+            );
+            assert!(
+                entry["subject"].as_str().is_some()
+                    || entry["subject_prefix"]
+                        .as_str()
+                        .is_some_and(|s| !s.is_empty()),
+                "link kind {kind} lacks a subject marker"
+            );
+        }
+    }
+
+    /// The documented retrieval path works exactly as written: an external
+    /// reader opens outbox.jsonl from the isolated profile and extracts the
+    /// three action-link kinds without any in-process handle.
+    #[test]
+    fn mail_sink_outbox_is_externally_retrievable() {
+        let dir = temp_dir("outbox");
+        let sink = MailSink::new(&dir);
+        sink.deliver(&crate::mail::verification_message(
+            "journey@example.com",
+            "verifytoken1",
+            "focusboard://auth",
+        ))
+        .unwrap();
+        sink.deliver(&crate::mail::password_reset_message(
+            "journey@example.com",
+            "resettoken1",
+            "focusboard://auth/reset",
+        ))
+        .unwrap();
+        sink.deliver(&crate::mail::reminder_message(
+            "journey@example.com",
+            "tsk_journey",
+            "Prepare first demo",
+            Some("2026-09-20"),
+            "2026-09-20 09:00",
+        ))
+        .unwrap();
+
+        let outbox = std::fs::read_to_string(dir.join("mail-sink").join("outbox.jsonl")).unwrap();
+        let records: Vec<serde_json::Value> = outbox
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("outbox line is one JSON object"))
+            .collect();
+        assert_eq!(records.len(), 3);
+
+        let find = |needle: &str| {
+            records
+                .iter()
+                .find(|r| {
+                    r["action_url"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .contains(needle)
+                })
+                .unwrap_or_else(|| panic!("no record with action_url containing {needle}"))
+        };
+        let verify = find("focusboard://auth/verify?token=verifytoken1");
+        assert_eq!(verify["subject"], "Verify your Focusboard email");
+        let reset = find("focusboard://auth/reset?token=resettoken1");
+        assert_eq!(reset["subject"], "Reset your Focusboard password");
+        assert_eq!(reset["to"], "journey@example.com");
+        let reminder = find("focusboard://task?id=tsk_journey");
+        assert!(reminder["subject"]
+            .as_str()
+            .unwrap()
+            .starts_with("Focusboard reminder:"));
+        assert!(reminder["body_text"]
+            .as_str()
+            .unwrap()
+            .contains("Prepare first demo"));
+        assert!(!reminder["action_url"].as_str().unwrap().contains("token="));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
