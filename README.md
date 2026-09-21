@@ -21,9 +21,9 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Field | Value |
 | --- | --- |
-| Open | 6 |
+| Open | 7 |
 | Closed | 15 |
-| All | 21 |
+| All | 22 |
 
 ---
 
@@ -61,7 +61,7 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Candidate | Base | Current state |
 | --- | --- | --- |
-| `loop-24-457f674650db` | `development_snapshot:attempt-b2b99d694dfc602cfbeb62e8` | BLOCKED |
+| `loop-24-457f674650db` | `development_snapshot:attempt-b2b99d694dfc602cfbeb62e8` | PASS |
 
 ### Project Planner
 
@@ -92,17 +92,18 @@ This README is the canonical issue ledger for this product: the host-derived per
 | Candidate | `loop-24-457f674650db` |
 | Product completion | IN PROGRESS |
 | Review scope | `golden_path` |
-| Findings | 5 (4 blocking focus items) |
+| Findings | 6 (5 blocking focus items) |
 
 ### Evidence / QA findings
 
 | ID | Severity | Impact | Release risk | Summary |
 | --- | --- | --- | --- | --- |
-| `fnd.loop24.journey-drive-blocked-create-task` | MAJOR | INTERNAL | HIGH | Independent host journey drive is blocked at manifest step 8/18 create_task ('control not found: [data-testid=task-detail-toggle]'); the product behaved PRD 6.3-correctly (the no-due-date quick-add task stays in Inbox), so the pinned manifest's configure path targets an unreachable Today state and PRD steps 6-11 plus the four recovery states remain independently unverified. |
-| `fnd.loop24.journey-measurement-gaps` | MAJOR | INTERNAL | MEDIUM | Pinned journey manifest predicates bind only shipped UI and the isolated mail sink (all spot-checked selectors exist), but frozen business outcomes still lack direct predicates: exact-once completion (no count_equals), the '1 task completed.' daily-summary sentence, focus running/paused transitions, the project-assignment value, and reset two-phase headings. |
-| `fnd.loop24.auth-recovery-steps-undriven` | MINOR | INTERNAL | MEDIUM | Forgot-password, reset-link, new-password sign-in, and expired-link recovery (manifest steps 12-18) are white-box proven (AuthViews selectors exist; rust-unit covers malformed/expired/reused tokens as recoverable) but the independent drive has never reached them, stopping at step 8 this loop. |
-| `fnd.loop24.deeplink-external-activation-carried` | MINOR | DEGRADED | MEDIUM | External focusboard:// warm/cold activation remains receipt-blocked: the collector cannot discover a link nor bind an activation process/session (external_activation receipt blocked; host verification marks the operation unmeasured); scheme registration stays unit-proven while the in-app paste affordance keeps the journey drivable. |
-| `fnd.loop24.prd92-fault-narrow-states-uncaptured` | MAJOR | INTERNAL | MEDIUM | PRD 9.2 fault-injected network-error state (preserved input, explicit Retry) and narrow-viewport Today capture remain runtime-uncaptured: the collector's execute/sync channel returned HTTP 500 on all 12 responsive metric probes (screenshots and hydration flags null while surfaces were reached) and network-error stays not_run because the product exposes no fault-injection hook to WebDriver. |
+| `fnd.loop24.journey-drive-blocked-create-task` | MAJOR | INTERNAL | HIGH | Independent host journey drive is blocked at manifest step 8/18 create_task again this loop: the amended manifest still configures via [data-testid=task-detail-toggle] on Today, a control that cannot exist after a no-due-date quick-add because PRD 6.3 correctly keeps the task in Inbox; the product behavior at the failure point is PRD-correct, so the blocker is the manifest action path, not the product. |
+| `fnd.loop24.golden-path-steps-9-18-unverified` | MAJOR | unlabelled | HIGH | PRD 3 steps 8-11 and all four recovery states remain independently unverified: the host journey drive has never passed step 8, so focus-cycle completion, exact-once completion, reminder email delivery, sign-out/in persistence, and the forgot-password/reset/new-password/expired-link recovery states have no black-box runtime evidence; PRD 3 makes this path the release gate. |
+| `fnd.loop24.journey-predicate-coverage-gaps` | MINOR | INTERNAL | MEDIUM | Pinned journey predicates bind only shipped UI and the isolated mail sink (spot-checked selectors exist and steps 1-7 observed real outcomes), but frozen business outcomes still lack direct predicates: exact-once completion count, the '1 task completed.' daily-summary sentence, focus running/paused transitions, the project-assignment value, and reset two-phase headings. |
+| `fnd.loop24.deeplink-warm-argv-verified-cold-open` | MINOR | INTERNAL | LOW | External activation progress this loop: the external_activation receipt passes for the warm scenario via candidate-executable argv transport with activation-before/after evidence bound to the candidate, but cold activation and OS URL-handler registration remain explicitly untested, so the scheme-activation issue narrows and stays open. |
+| `fnd.loop24.prd92-network-error-uncaptured` | MINOR | INTERNAL | MEDIUM | PRD 9.2 fault-injected network-error state (preserved input, explicit Retry) remains runtime-uncaptured because the product exposes no WebDriver-reachable fault-injection hook, and narrow-viewport layout integrity stays unmeasured because the requested 390px viewport was clamped to the 640px window minWidth, though the 640px narrow capture itself is coherent. |
+| `fnd.loop24.isolated-store-advisory-flag-false` | NOTE | INTERNAL | LOW | The isolated_native_store check reports false (advisory, non-blocking) across preflight, replay and tester_lifecycle receipts while the ledger closed the isolated-store probe as passing in loop-15 and rust-unit's data-dir derivation test passes; the flag's current meaning is unexplained in the receipts. |
 
 ---
 
