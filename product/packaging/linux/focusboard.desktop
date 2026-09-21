@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Focusboard
+GenericName=Task manager
+Comment=Local-first tasks, focus sessions, and reminders
+Exec=focusboard %u
+Terminal=false
+Icon=focusboard
+MimeType=x-scheme-handler/focusboard;
+Categories=Office;ProjectManagement;
+NoDisplay=true
+StartupWMClass=Focusboard

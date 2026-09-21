@@ -232,28 +232,31 @@
       "title": "Create the task, assign it, set due date, reminder time and timezone",
       "driver": "external_webdriver",
       "action": "type_submit_and_configure",
-      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-today]" },
+      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-inbox]" },
       "locator": { "strategy": "css", "selector": "form.quick-add" },
       "typed_values": [
         { "selector": "#quick-add-input", "template": "{task_title}" },
-        { "selector": "[data-testid=task-detail-toggle]", "template": null },
+        { "selector": "[data-testid=task-row] [data-testid=task-detail-toggle]", "template": null },
         { "selector": "[data-testid=task-row] label.task-assign select", "template": "{project_name}" },
         { "selector": "[data-testid=task-row] label.task-due input[type=date]", "template": "{due_date}" },
-        { "selector": "[data-testid=reminder-time]", "template": "{reminder_time}" },
-        { "selector": "[data-testid=reminder-timezone]", "template": "{timezone}" }
+        { "selector": "[data-testid=task-row] [data-testid=reminder-time]", "template": "{reminder_time}" },
+        { "selector": "[data-testid=task-row] [data-testid=reminder-timezone]", "template": "{timezone}" },
+        { "selector": "[data-testid=task-row] [data-testid=reminder-apply]", "template": null }
       ],
       "expected_state": {
-        "description": "Task row carries the project assignment, due date, and a scheduled reminder.",
-        "observable": "[data-testid=task-row][data-status=todo] exists with detail values set",
+        "description": "The task's Inbox row carries the project assignment, due date, and a scheduled reminder.",
+        "observable": "[data-testid=task-row][data-status=todo] in Inbox with detail values set",
         "assertions": [
           { "kind": "visible", "selector": "[data-testid=task-row][data-status=todo]" },
           { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{task_title}" },
+          { "kind": "text_equals", "selector": "[data-testid=task-row] label.task-assign select option:checked", "value": "{project_name}" },
           { "kind": "value_equals", "selector": "[data-testid=task-row] label.task-due input[type=date]", "value": "{due_date}" },
-          { "kind": "value_equals", "selector": "[data-testid=reminder-time]", "value": "{reminder_time}" }
+          { "kind": "value_equals", "selector": "[data-testid=task-row] [data-testid=reminder-time]", "value": "{reminder_time}" }
         ]
       },
       "screenshot": { "checkpoint": "07-task-configured" },
-      "drive_status": "externally_drivable"
+      "drive_status": "externally_drivable",
+      "notes": "PRD 6.3 keeps a no-due-date quick-add out of Today, so the configure phase runs from the task's Inbox row: quick-add submits the title, then the Inbox row's detail toggle, project assignment, due date, and reminder controls (time, timezone, Remind) are driven in order. The Remind click schedules the reminder whose delivery step 10 observes."
     },
     {
       "id": "verify_views_presence",
@@ -299,26 +302,60 @@
       "prd_step": 8,
       "title": "Start a focus session, pause, resume, and complete the task",
       "driver": "external_webdriver",
-      "action": "click_sequence",
-      "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-focus]" },
-      "locator": { "strategy": "css", "selector": "[data-testid=focus-active]" },
-      "typed_values": [
-        { "selector": "[data-testid=focus-task-select]", "template": "{task_title}" },
-        { "selector": "[data-testid=focus-start]", "template": null },
-        { "selector": "[data-testid=focus-pause]", "template": null },
-        { "selector": "[data-testid=focus-resume]", "template": null },
-        { "selector": "[data-testid=focus-finish]", "template": null }
+      "action": "phased_sequence",
+      "phases": [
+        {
+          "id": "start-running",
+          "actions": [
+            { "kind": "click", "selector": "[data-testid=nav-focus]" },
+            { "kind": "fill", "selector": "[data-testid=focus-task-select]", "value": "{task_title}" },
+            { "kind": "submit", "selector": "form.focus-start-form" }
+          ],
+          "assertions": [
+            { "kind": "attribute_equals", "selector": "[data-testid=focus-active]", "attribute": "data-focus-state", "value": "running" }
+          ]
+        },
+        {
+          "id": "paused",
+          "actions": [
+            { "kind": "click", "selector": "[data-testid=focus-pause]" }
+          ],
+          "assertions": [
+            { "kind": "attribute_equals", "selector": "[data-testid=focus-active]", "attribute": "data-focus-state", "value": "paused" }
+          ]
+        },
+        {
+          "id": "resumed-running",
+          "actions": [
+            { "kind": "click", "selector": "[data-testid=focus-resume]" }
+          ],
+          "assertions": [
+            { "kind": "attribute_equals", "selector": "[data-testid=focus-active]", "attribute": "data-focus-state", "value": "running" }
+          ]
+        },
+        {
+          "id": "completed",
+          "actions": [
+            { "kind": "click", "selector": "[data-testid=focus-finish]" }
+          ],
+          "assertions": [
+            { "kind": "count_equals", "selector": ".focus-history .session-row[data-session-state=completed]", "value": 1 },
+            { "kind": "text_equals", "selector": ".focus-history .session-row[data-session-state=completed] .session-state", "value": "Completed" },
+            { "kind": "text_contains", "selector": ".focus-history .session-row[data-session-state=completed] .session-task", "value": "{task_title}" }
+          ]
+        }
       ],
       "expected_state": {
-        "description": "Session reaches running, paused, running again, then completed.",
+        "description": "Session reaches running, paused, running again, then completed; each transition is observed in its own phase before the next action runs.",
         "observable": "[data-testid=focus-active] data-focus-state passes running -> paused -> running -> completed",
         "assertions": [
-          { "kind": "text_contains", "selector": ".focus-history .session-row[data-session-state=completed] .session-task", "value": "{task_title}" },
+          { "kind": "count_equals", "selector": ".focus-history .session-row[data-session-state=completed]", "value": 1 },
           { "kind": "text_equals", "selector": ".focus-history .session-row[data-session-state=completed] .session-state", "value": "Completed" }
         ]
       },
       "screenshot": { "checkpoint": "09-focus-completed" },
-      "drive_status": "externally_drivable"
+      "drive_status": "externally_drivable",
+      "notes": "Each phase captures its own screenshot and observes its assertions together before the next phase acts, so the PRD 6.4 running and paused transitions are direct per-phase predicates, not a final-state proxy."
     },
     {
       "id": "complete_task_once",
@@ -327,19 +364,21 @@
       "driver": "external_webdriver",
       "action": "click_and_assert",
       "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-today]" },
-      "locator": { "strategy": "css", "selector": "[data-testid=task-row][data-status=completed]" },
+      "locator": { "strategy": "css", "selector": "[data-testid=task-row][data-status=todo] [data-testid=task-check]" },
       "typed_values": [],
       "expected_state": {
-        "description": "Exactly one completed row for the task; the Today daily summary reflects one completed focus session for the day.",
+        "description": "The open Today row's check control completes the task exactly once; exactly one completed row remains and the Done-today summary carries the verbatim '1 task completed.' sentence.",
         "observable": "one [data-testid=task-row][data-status=completed] and no duplicate rows",
         "assertions": [
-          { "kind": "visible", "selector": "[data-testid=task-row][data-status=completed]" },
+          { "kind": "count_equals", "selector": "[data-testid=task-row][data-status=completed]", "value": 1 },
           { "kind": "text_contains", "selector": "[data-testid=task-row][data-status=completed] .task-title", "value": "{task_title}" },
+          { "kind": "text_contains", "selector": ".view-body", "value": "1 task completed." },
           { "kind": "text_contains", "selector": ".focus-day-row[data-focus-state=completed] .focus-day-task", "value": "{task_title}" }
         ]
       },
       "screenshot": { "checkpoint": "10-completed-summary" },
-      "drive_status": "externally_drivable"
+      "drive_status": "externally_drivable",
+      "notes": "Clicking the open row's check control is the single completing action (PRD 6.3); count_equals proves exactly-once completion and text_contains asserts the verbatim PRD daily-summary sentence."
     },
     {
       "id": "retrieve_reminder_link",
@@ -440,22 +479,38 @@
       "recovery_state": "email_link_reset",
       "title": "Open the reset link and set a new password",
       "driver": "external_webdriver",
-      "action": "drive_reset_link_and_submit",
-      "locator": { "strategy": "css", "selector": "section.auth-panel form" },
-      "typed_values": [
-        { "selector": "#reset-password", "template": "{new_password}" }
+      "action": "phased_sequence",
+      "phases": [
+        {
+          "id": "reset-form-open",
+          "actions": [
+            { "kind": "open_link", "context_key": "reset_link" }
+          ],
+          "assertions": [
+            { "kind": "text_equals", "selector": "h1#reset-form-title", "value": "Set a new password" }
+          ]
+        },
+        {
+          "id": "new-password-saved",
+          "actions": [
+            { "kind": "fill", "selector": "#reset-password", "value": "{new_password}" },
+            { "kind": "submit", "selector": "section.auth-panel form" }
+          ],
+          "assertions": [
+            { "kind": "text_equals", "selector": "h1#reset-done-title", "value": "Password updated" }
+          ]
+        }
       ],
       "expected_state": {
-        "description": "The reset link opens the set-new-password panel; submitting updates the password.",
+        "description": "The reset link opens the set-new-password panel, observed in its own phase; submitting updates the password, observed in the next phase.",
         "observable": "h1#reset-form-title 'Set a new password', then h1#reset-done-title 'Password updated'",
         "assertions": [
-          { "kind": "text_equals", "selector": "h1#reset-form-title", "value": "Set a new password" },
           { "kind": "text_equals", "selector": "h1#reset-done-title", "value": "Password updated" }
         ]
       },
       "screenshot": { "checkpoint": "13-password-updated" },
       "drive_status": "externally_drivable",
-      "notes": "The app routes an activation link delivered in the webview URL hash (any '#...reset?token=...' hash) to the reset surface, so the driver follows the link by navigating the webview URL — a real navigation, not a DOM probe. Out-of-process focusboard:// activation stays host-lane-dependent and waived."
+      "notes": "The app routes an activation link delivered in the webview URL hash (any '#...reset?token=...' hash) to the reset surface, so the driver follows the link by navigating the webview URL — a real navigation, not a DOM probe. The form heading and done heading are each observed in their own phase. Out-of-process focusboard:// activation stays host-lane-dependent and waived."
     },
     {
       "id": "sign_in_new_password",

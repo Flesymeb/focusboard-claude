@@ -297,6 +297,9 @@ mod tests {
 
     /// Every step declares a locator strategy and selector, an expected
     /// observable state, and — for UI-driven steps — a screenshot checkpoint.
+    /// Phased steps carry no step-level locator (the journey protocol forbids
+    /// it); each of their phases instead declares ordered actions and its own
+    /// executable assertions.
     #[test]
     fn journey_manifest_steps_are_fully_declared() {
         let manifest = journey_manifest();
@@ -306,6 +309,51 @@ mod tests {
         for step in steps {
             let id = step["id"].as_str().expect("step id");
             assert!(ids.insert(id.to_string()), "duplicate step id {id}");
+            if step["action"].as_str() == Some("phased_sequence") {
+                for key in ["pre_locator", "locator", "typed_values", "view_assertions"] {
+                    assert!(
+                        step[key].is_null(),
+                        "phased step {id} must not declare step-level {key}"
+                    );
+                }
+                let phases = step["phases"].as_array().expect("phased step {id} phases");
+                assert!(!phases.is_empty(), "phased step {id} has no phases");
+                for phase in phases {
+                    let phase_id = phase["id"].as_str().expect("phase id");
+                    let actions = phase["actions"].as_array().expect("phase actions");
+                    assert!(!actions.is_empty(), "phase {phase_id} has no actions");
+                    for action in actions {
+                        assert!(
+                            action["kind"].as_str().is_some_and(|s| !s.is_empty()),
+                            "phase {phase_id} action lacks kind"
+                        );
+                        assert!(
+                            action["selector"].as_str().is_some_and(|s| !s.is_empty())
+                                || action["kind"].as_str() == Some("reload")
+                                || (action["kind"].as_str() == Some("open_link")
+                                    && action["context_key"]
+                                        .as_str()
+                                        .is_some_and(|s| !s.is_empty())),
+                            "phase {phase_id} action lacks selector or context_key"
+                        );
+                    }
+                    let assertions = phase["assertions"].as_array().expect("phase assertions");
+                    assert!(!assertions.is_empty(), "phase {phase_id} has no assertions");
+                    for assertion in assertions {
+                        assert!(
+                            assertion["kind"].as_str().is_some_and(|s| !s.is_empty()),
+                            "phase {phase_id} assertion lacks kind"
+                        );
+                        assert!(
+                            assertion["selector"]
+                                .as_str()
+                                .is_some_and(|s| !s.is_empty()),
+                            "phase {phase_id} assertion lacks selector"
+                        );
+                    }
+                }
+                continue;
+            }
             let locator = &step["locator"];
             assert!(
                 locator["strategy"].as_str().is_some_and(|s| !s.is_empty()),
