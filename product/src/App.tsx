@@ -17,7 +17,7 @@ import {
   linkKindFromUrl,
   tokenFromLinkUrl,
 } from "./auth/AuthViews";
-import { GoldenPathProbe, consumeComposerFault } from "./GoldenPathProbe";
+import { GoldenPathProbe } from "./GoldenPathProbe";
 import { CalendarView } from "./views/CalendarView";
 import { FocusView } from "./views/FocusView";
 import { InboxView } from "./views/InboxView";
@@ -248,9 +248,6 @@ export default function App() {
     }
     setQuickAddBusy(true);
     try {
-      if (consumeComposerFault()) {
-        throw new Error("composer fault injected");
-      }
       await invoke("create_task", { title });
       setQuickAdd("");
       await refreshLists();

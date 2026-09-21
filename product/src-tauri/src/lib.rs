@@ -583,6 +583,15 @@ fn create_task(
     project_id: Option<String>,
     due_date: Option<String>,
 ) -> Result<tasks::Task, CommandError> {
+    // Opt-in golden-path fault: exactly one armed mutation request fails at
+    // this boundary so the composer renders its PRD 9.2 network-error state;
+    // unarmed, this is a no-op for every normal session.
+    if golden_path::consume_composer_fault() {
+        return Err(CommandError::new(
+            "connection_error",
+            "Focusboard could not reach its local service. The task was not added.",
+        ));
+    }
     require_then(&state, |s, u| {
         tasks::create_task(s, u, &title, project_id.as_deref(), due_date.as_deref())
     })
@@ -1028,7 +1037,8 @@ pub fn run() {
             golden_path::golden_path_drive_register,
             golden_path::golden_path_drive_consume_verification,
             golden_path::golden_path_drive_sign_in,
-            golden_path::golden_path_check_reminder_email
+            golden_path::golden_path_check_reminder_email,
+            golden_path::golden_path_fault_arm
         ])
         .run(tauri::generate_context!())
         .expect("error while running Focusboard");

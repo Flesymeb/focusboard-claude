@@ -1539,3 +1539,72 @@ select:hover {
   min-width: 0;
   color: var(--ink-soft);
 }
+
+/* ---------- PRD 9.2 narrow Today at 390px ---------- */
+
+/* The window can now reach 390px (tauri.conf.json minWidth), so the 760px
+   rules are extended: single-column hierarchy keeps every control on-screen
+   and readable at phone width — nothing overlaps or collapses. */
+@media (max-width: 420px) {
+  .sidebar {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .sidebar nav ul {
+    gap: 0;
+  }
+
+  .nav-item {
+    padding: 6px 8px;
+  }
+
+  .content {
+    padding: 12px 12px 40px;
+  }
+
+  .quick-add {
+    gap: 8px;
+  }
+
+  .quick-add input {
+    min-width: 0;
+  }
+
+  .view-head h1 {
+    font-size: 21px;
+  }
+
+  .task-row {
+    gap: 8px;
+  }
+
+  .task-main {
+    gap: 6px 10px;
+  }
+
+  .task-assign select {
+    max-width: 150px;
+  }
+
+  .filter-bar {
+    gap: 8px;
+  }
+
+  .filter-search {
+    flex-basis: 100%;
+    min-width: 0;
+  }
+
+  .filter-field {
+    flex: 1 1 40%;
+  }
+
+  .filter-field select {
+    max-width: 100%;
+  }
+
+  .calendar-toolbar {
+    gap: 8px;
+  }
+}

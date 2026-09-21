@@ -8,6 +8,7 @@ use crate::mail::MailMessage;
 use crate::store::{CommandError, CommandResult};
 use rand::RngCore;
 use serde::Serialize;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::State;
 
@@ -60,6 +61,39 @@ pub fn golden_path_drive_start(
         .map_err(|_| CommandError::new("internal_error", "Drive state is unavailable."))?;
     *guard = Some(generate_credentials());
     Ok(DriveStarted { started: true })
+}
+
+/// The opt-in composer network fault: in-process only, so it never outlives
+/// the run and never touches anything outside the isolated per-run profile.
+static COMPOSER_FAULT: AtomicBool = AtomicBool::new(false);
+
+/// Arms the composer fault so exactly one later mutation request fails.
+/// Gated behind the golden-path drive: refuses with drive_not_started until
+/// golden_path_drive_start ran, so normal sessions and default startup can
+/// never arm it.
+fn arm_composer_fault(drive: &GoldenPathDrive) -> CommandResult<bool> {
+    with_drive(drive, |_c| {
+        COMPOSER_FAULT.store(true, Ordering::SeqCst);
+        Ok(true)
+    })
+}
+
+/// Consumes an armed fault exactly once for the next mutation request.
+pub fn consume_composer_fault() -> bool {
+    COMPOSER_FAULT.swap(false, Ordering::SeqCst)
+}
+
+#[derive(Serialize)]
+pub struct ComposerFaultArmed {
+    pub armed: bool,
+}
+
+#[tauri::command]
+pub fn golden_path_fault_arm(
+    drive: State<GoldenPathDrive>,
+) -> Result<ComposerFaultArmed, CommandError> {
+    let armed = arm_composer_fault(&drive)?;
+    Ok(ComposerFaultArmed { armed })
 }
 
 fn with_drive<T, F>(drive: &GoldenPathDrive, f: F) -> Result<T, CommandError>
@@ -203,6 +237,9 @@ mod tests {
     use crate::store::new_id;
     use std::path::PathBuf;
 
+    /// Serializes the tests that touch the process-wide fault flag.
+    static FAULT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
     fn temp_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("focusboard-gp-{name}-{}", new_id("t")));
         std::fs::create_dir_all(&dir).unwrap();
@@ -228,6 +265,33 @@ mod tests {
         let err = with_drive(&drive, |c| Ok(c.email.clone())).unwrap_err();
         assert_eq!(err.code, "drive_not_started");
         assert!(drive.0.lock().unwrap().is_none());
+    }
+
+    /// The fault instrument sits behind the same gate: before
+    /// golden_path_drive_start the arm refuses with drive_not_started and no
+    /// fault is ever armed, so default startup behavior stays zero.
+    #[test]
+    fn composer_fault_refuses_to_arm_before_drive_start() {
+        let _guard = FAULT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let drive = GoldenPathDrive::new();
+        let err = arm_composer_fault(&drive).unwrap_err();
+        assert_eq!(err.code, "drive_not_started");
+        assert!(!consume_composer_fault());
+    }
+
+    /// Once armed behind the gate, the fault makes exactly one mutation
+    /// request fail; the Retry resend then reaches the backend untouched.
+    #[test]
+    fn armed_composer_fault_fires_exactly_once() {
+        let _guard = FAULT_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let drive = GoldenPathDrive::new();
+        drive.0.lock().unwrap().replace(generate_credentials());
+        assert!(arm_composer_fault(&drive).unwrap());
+        assert!(consume_composer_fault());
+        assert!(!consume_composer_fault());
+        assert!(arm_composer_fault(&drive).unwrap());
+        assert!(consume_composer_fault());
+        assert!(!consume_composer_fault());
     }
 
     #[test]

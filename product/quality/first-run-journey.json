@@ -22,7 +22,8 @@
     "opt_in_gates_preserved": [
       "hidden non-focusable #golden-path-trigger button (tabIndex=-1, aria-hidden) is the only drive starter",
       "backend drive steps refuse with drive_not_started until golden_path_drive_start ran explicitly",
-      "reminder-email probe returns booleans only, never message content"
+      "reminder-email probe returns booleans only, never message content",
+      "the composer network fault arms only through golden_path_fault_arm after golden_path_drive_start, and makes exactly one mutation request fail"
     ]
   },
   "action_link_retrieval": {
@@ -63,7 +64,8 @@
   },
   "host_lane_dependencies": [
     "Registering a manifest-consuming journey stage in the host focusboard-native-webdriver scenario (Host follow-up; outside developer write targets).",
-    "Out-of-process focusboard:// link activation (OS handler / mail client): structurally unavailable in this harness; waived for the external-activation receipt lane. The in-app paste affordance (steps follow_verification_link, reset_open_link) keeps these steps drivable without it."
+    "Out-of-process focusboard:// link activation (OS handler / mail client): structurally unavailable in this harness; waived for the external-activation receipt lane. The in-app paste affordance (steps follow_verification_link, reset_open_link) keeps these steps drivable without it.",
+    "Step network_error_recovery requires the host to invoke golden_path_drive_start over IPC before its fault-trigger phase: the backend fault-arm command refuses with drive_not_started until then, which keeps the injected fault unavailable to normal sessions and default startup."
   ],
   "typed_value_templates": {
     "display_name": "Journey User",
@@ -72,6 +74,7 @@
     "new_password": "renewed-{run_id}-7q{run_id}",
     "project_name": "Launch plan",
     "task_title": "Prepare first demo",
+    "fault_task_title": "Recovered morning check",
     "due_date": "{today_local}",
     "reminder_time": "{now_plus_0_minutes_local_HH:mm}",
     "timezone": "{account_timezone}"
@@ -245,9 +248,9 @@
       ],
       "expected_state": {
         "description": "The task's Inbox row carries the project assignment, due date, and a scheduled reminder.",
-        "observable": "[data-testid=task-row][data-status=todo] in Inbox with detail values set",
+        "observable": "[data-testid=task-row][data-status=open] in Inbox with detail values set",
         "assertions": [
-          { "kind": "visible", "selector": "[data-testid=task-row][data-status=todo]" },
+          { "kind": "visible", "selector": "[data-testid=task-row][data-status=open]" },
           { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{task_title}" },
           { "kind": "text_equals", "selector": "[data-testid=task-row] label.task-assign select option:checked", "value": "{project_name}" },
           { "kind": "value_equals", "selector": "[data-testid=task-row] label.task-due input[type=date]", "value": "{due_date}" },
@@ -364,7 +367,7 @@
       "driver": "external_webdriver",
       "action": "click_and_assert",
       "pre_locator": { "strategy": "css", "selector": "[data-testid=nav-today]" },
-      "locator": { "strategy": "css", "selector": "[data-testid=task-row][data-status=todo] [data-testid=task-check]" },
+      "locator": { "strategy": "css", "selector": "[data-testid=task-row][data-status=open] [data-testid=task-check]" },
       "typed_values": [],
       "expected_state": {
         "description": "The open Today row's check control completes the task exactly once; exactly one completed row remains and the Done-today summary carries the verbatim '1 task completed.' sentence.",
@@ -556,6 +559,86 @@
       "screenshot": { "checkpoint": "15-expired-link-recovery" },
       "drive_status": "externally_drivable",
       "notes": "Expired-token fixture: reuse the token consumed by reset_open_link, or request a reset and let the 60-minute expiry lapse in a seeded store. Reuse of a single-use token is the drivable equivalent."
+    },
+    {
+      "id": "network_error_recovery",
+      "prd_step": null,
+      "recovery_state": "network_error",
+      "title": "A failed quick-add keeps the text, names the failure, and Retry recovers",
+      "driver": "external_webdriver",
+      "action": "phased_sequence",
+      "phases": [
+        {
+          "id": "fault-armed",
+          "actions": [
+            { "kind": "click", "selector": "#fault-inject-composer" }
+          ],
+          "assertions": [
+            { "kind": "attribute_equals", "selector": "#fault-inject-composer", "attribute": "data-fault-armed", "value": "composer" }
+          ]
+        },
+        {
+          "id": "preserved-input-failure",
+          "actions": [
+            { "kind": "fill", "selector": "#quick-add-input", "value": "{fault_task_title}" },
+            { "kind": "submit", "selector": "form.quick-add" }
+          ],
+          "assertions": [
+            { "kind": "value_equals", "selector": "#quick-add-input", "value": "{fault_task_title}" },
+            { "kind": "visible", "selector": "[data-testid=quick-add-failure]" },
+            { "kind": "text_contains", "selector": ".quick-add-error", "value": "failed" },
+            { "kind": "visible", "selector": "[data-testid=quick-add-retry]" }
+          ]
+        },
+        {
+          "id": "retry-recovers",
+          "actions": [
+            { "kind": "click", "selector": "[data-testid=quick-add-retry]" }
+          ],
+          "assertions": [
+            { "kind": "value_equals", "selector": "#quick-add-input", "value": "" },
+            { "kind": "absent", "selector": "[data-testid=quick-add-failure]" },
+            { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{fault_task_title}" }
+          ]
+        }
+      ],
+      "expected_state": {
+        "description": "With the opt-in fault armed, the quick-add mutation fails once; the entered title stays in the input, the alert names the failed action, an explicit Retry resends the mutation, and the recovered content renders the task exactly once.",
+        "observable": "data-fault-armed=composer, then preserved input plus attributable alert plus Retry, then cleared input, dismissed alert, and the recovered task row",
+        "assertions": [
+          { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{fault_task_title}" },
+          { "kind": "absent", "selector": "[data-testid=quick-add-failure]" }
+        ]
+      },
+      "screenshot": { "checkpoint": "16-network-error-recovery" },
+      "drive_status": "externally_drivable",
+      "notes": "PRD 9.2 network-error state. The fault is armed only through the gated backend command (see host_lane_dependencies): without golden_path_drive_start the click leaves the fault unarmed and the data-fault-armed assertion honestly fails. Each phase observes its assertions together before the next phase acts, so preserved input, attributable failure, explicit Retry, and recovered content are direct per-phase predicates."
+    },
+    {
+      "id": "narrow_today_390",
+      "prd_step": null,
+      "recovery_state": "narrow_today",
+      "title": "Relaunch with a 390px main window and confirm narrow-Today hierarchy",
+      "driver": "external_webdriver",
+      "action": "launch_app",
+      "window": { "width": 390, "height": 844 },
+      "locator": { "strategy": "css", "selector": ".view-head h1" },
+      "typed_values": [],
+      "expected_state": {
+        "description": "Relaunched in the same isolated profile with the main window at 390px, the app restores the signed-in Today surface and the task hierarchy survives: capture input, submit control, task title, and check control all render without overlap.",
+        "observable": ".view-head h1 equals 'Today' with quick-add, task title, and check control all visible at 390px",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=nav-today]" },
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Today" },
+          { "kind": "visible", "selector": "#quick-add-input" },
+          { "kind": "visible", "selector": "[data-testid=quick-add-submit]" },
+          { "kind": "visible", "selector": "[data-testid=task-row] .task-title" },
+          { "kind": "visible", "selector": "[data-testid=task-row] [data-testid=task-check]" }
+        ]
+      },
+      "screenshot": { "checkpoint": "17-narrow-today-390" },
+      "drive_status": "externally_drivable",
+      "notes": "PRD 9.2 narrow-Today state. The driver closes the previous instance and launches the app in the same FOCUSBOARD_DATA_DIR profile with the main window at 390x844; the persisted session restores straight to Today. minWidth is 390 in tauri.conf.json, so no narrower request is clamped."
     }
   ]
 }
