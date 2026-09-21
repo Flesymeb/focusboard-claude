@@ -49,7 +49,9 @@ export function InboxView(props: {
     return () => {
       alive = false;
     };
-  }, [search, priority, due, completion, reload, props.timezone]);
+    // props.tasks is a new reference on every shell refresh (e.g. a fresh
+    // quick-add capture); re-query so the Inbox reflects captures immediately.
+  }, [search, priority, due, completion, reload, props.timezone, props.tasks]);
 
   if (props.error) {
     return <ErrorState message={props.error} onRetry={props.onRetry} />;
