@@ -417,12 +417,12 @@ select:hover {
   display: flex;
   align-items: baseline;
   gap: 14px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   min-width: 0;
 }
 
 .task-title {
-  flex: 1 1 240px;
+  flex: 1 1 0;
   min-width: 0;
   overflow-wrap: anywhere;
 }
