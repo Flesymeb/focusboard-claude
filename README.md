@@ -33,13 +33,17 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Candidate | Base | Current state |
 | --- | --- | --- |
-| `loop-25-457f674650db` | `warm_start:loop-24-457f674650db` | WARM STARTED |
+| `loop-25-457f674650db` | `warm_start:loop-24-457f674650db` | PLANNED |
 
 ### Project Planner
 
 | Field | Value |
 | --- | --- |
-| Status | PENDING |
+| Status | PLANNED |
+| Focus | golden_path |
+| Objective | Close gap:prd_golden_path by repairing the candidate-owned golden-path measurement inputs: replace the dead create_task configure route with the PRD-correct Inbox-row path, add the missing direct predicates for PRD 3 steps 8-11 and the four recovery states, and supply an opt-in OS URL-handler registration artifact for cold activation, so the Host journey_drive can execute all 18 steps against the candidate and the three pinned evidence-stalled issues become measurable. |
+| Strategy | `strategy.dead-route-replacement-and-predicate-completion` |
+| Tasks | 1 |
 
 ### Developer
 
