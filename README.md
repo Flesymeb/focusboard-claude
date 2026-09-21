@@ -27,13 +27,41 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 ---
 
+## Loop 25
+
+> A host-derived record of one Planner → Developer → QA Tester cycle.
+
+| Candidate | Base | Current state |
+| --- | --- | --- |
+| `loop-25-457f674650db` | `warm_start:loop-24-457f674650db` | WARM STARTED |
+
+### Project Planner
+
+| Field | Value |
+| --- | --- |
+| Status | PENDING |
+
+### Developer
+
+| Field | Value |
+| --- | --- |
+| Status | NOT STARTED |
+
+### QA Tester
+
+| Field | Value |
+| --- | --- |
+| Status | UNTESTED |
+
+---
+
 ## Loop 24
 
 > A host-derived record of one Planner → Developer → QA Tester cycle.
 
 | Candidate | Base | Current state |
 | --- | --- | --- |
-| `loop-24-457f674650db` | `development_snapshot:attempt-b2b99d694dfc602cfbeb62e8` | PASS |
+| `loop-24-457f674650db` | `development_snapshot:attempt-b2b99d694dfc602cfbeb62e8` | BLOCKED |
 
 ### Project Planner
 
@@ -60,22 +88,21 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 | Field | Value |
 | --- | --- |
-| Status | PASS |
+| Status | BLOCKED |
 | Candidate | `loop-24-457f674650db` |
 | Product completion | IN PROGRESS |
 | Review scope | `golden_path` |
-| Findings | 6 (0 blocking focus items) |
+| Findings | 5 (4 blocking focus items) |
 
 ### Evidence / QA findings
 
 | ID | Severity | Impact | Release risk | Summary |
 | --- | --- | --- | --- | --- |
-| `fnd.loop24.journey-mail-kind-postcondition-unsatisfiable` | MINOR | INTERNAL | LOW | Host journey_drive fails at step 4 because mail_kind_equals cannot be satisfied against the documented mail-sink record format, contradicting the receipt's own kind=verification classification. |
-| `fnd.loop24.section3-journey-receipt-partial` | MINOR | INTERNAL | LOW | The host-driven section-3 journey receipt now exists for the first time but covers 4/18 steps; the signed-in task/focus/reminder/persistence pass remains unverified by the independent lane. |
-| `fnd.loop24.auth-recovery-steps-not-yet-driven` | MINOR | INTERNAL | LOW | Forgot-password, reset-link, new-password sign-in, and expired-link recovery remain white-box proven but unexecuted by the host journey drive, which stopped at step 4. |
-| `fnd.loop24.deeplink-external-activation-carried` | NOTE | INTERNAL | LOW | External focusboard:// warm/cold activation remains receipt-blocked: the collector cannot discover a link nor bind an activation process/session; scheme registration stays unit-proven. |
-| `fnd.loop24.prd92-fault-narrow-states-uncaptured` | MINOR | INTERNAL | LOW | PRD 9.2 fault-injected network-error and narrow-viewport Today states remain runtime-uncaptured; the collector's execute/sync channel also failed across all responsive metrics, nulling screenshots and hydration flags while the surfaces themselves rendered fully. |
-| `fnd.loop24.journey-predicate-coverage-gaps` | MINOR | INTERNAL | LOW | All changed-manifest predicates verified against shipped source; exact remaining unverified outcomes enumerated for the manifest consumer. |
+| `fnd.loop24.journey-drive-blocked-create-task` | MAJOR | INTERNAL | HIGH | Independent host journey drive is blocked at manifest step 8/18 create_task ('control not found: [data-testid=task-detail-toggle]'); the product behaved PRD 6.3-correctly (the no-due-date quick-add task stays in Inbox), so the pinned manifest's configure path targets an unreachable Today state and PRD steps 6-11 plus the four recovery states remain independently unverified. |
+| `fnd.loop24.journey-measurement-gaps` | MAJOR | INTERNAL | MEDIUM | Pinned journey manifest predicates bind only shipped UI and the isolated mail sink (all spot-checked selectors exist), but frozen business outcomes still lack direct predicates: exact-once completion (no count_equals), the '1 task completed.' daily-summary sentence, focus running/paused transitions, the project-assignment value, and reset two-phase headings. |
+| `fnd.loop24.auth-recovery-steps-undriven` | MINOR | INTERNAL | MEDIUM | Forgot-password, reset-link, new-password sign-in, and expired-link recovery (manifest steps 12-18) are white-box proven (AuthViews selectors exist; rust-unit covers malformed/expired/reused tokens as recoverable) but the independent drive has never reached them, stopping at step 8 this loop. |
+| `fnd.loop24.deeplink-external-activation-carried` | MINOR | DEGRADED | MEDIUM | External focusboard:// warm/cold activation remains receipt-blocked: the collector cannot discover a link nor bind an activation process/session (external_activation receipt blocked; host verification marks the operation unmeasured); scheme registration stays unit-proven while the in-app paste affordance keeps the journey drivable. |
+| `fnd.loop24.prd92-fault-narrow-states-uncaptured` | MAJOR | INTERNAL | MEDIUM | PRD 9.2 fault-injected network-error state (preserved input, explicit Retry) and narrow-viewport Today capture remain runtime-uncaptured: the collector's execute/sync channel returned HTTP 500 on all 12 responsive metric probes (screenshots and hydration flags null while surfaces were reached) and network-error stays not_run because the product exposes no fault-injection hook to WebDriver. |
 
 ---
 
@@ -1206,10 +1233,10 @@ This README is the canonical issue ledger for this product: the host-derived per
 
 ## Current pointers
 
-- Latest candidate: `loop-24-457f674650db`
+- Latest candidate: `loop-25-457f674650db`
 - Accepted candidate: `loop-18-cd6ff4ca9b29`
-- Latest attempted: `loop-24-457f674650db`
-- Latest warm start: `loop-24-72467d3e1723`
+- Latest attempted: `loop-25-457f674650db`
+- Latest warm start: `loop-25-457f674650db`
 - Last published: `loop-24-457f674650db`
 - Best verified: `loop-24-457f674650db`
 - Generated by the HoH host from immutable run evidence.
