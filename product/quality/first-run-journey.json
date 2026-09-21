@@ -87,7 +87,11 @@
       "typed_values": [],
       "expected_state": {
         "description": "Auth shell renders the sign-in panel with heading 'Sign in with email'.",
-        "observable": "h1#signin-title text equals 'Sign in with email'"
+        "observable": "h1#signin-title text equals 'Sign in with email'",
+        "assertions": [
+          { "kind": "visible", "selector": "section.auth-panel" },
+          { "kind": "text_equals", "selector": "h1#signin-title", "value": "Sign in with email" }
+        ]
       },
       "screenshot": { "checkpoint": "01-landing-shell" },
       "drive_status": "externally_drivable"
@@ -102,7 +106,10 @@
       "typed_values": [],
       "expected_state": {
         "description": "Create-account panel renders.",
-        "observable": "h1#create-title text equals 'Create your account'"
+        "observable": "h1#create-title text equals 'Create your account'",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#create-title", "value": "Create your account" }
+        ]
       },
       "screenshot": { "checkpoint": "02-create-account-form" },
       "drive_status": "externally_drivable"
@@ -121,7 +128,10 @@
       ],
       "expected_state": {
         "description": "Registration accepted; app shows the check-your-email panel.",
-        "observable": "h1#verify-title text equals 'Check your email'"
+        "observable": "h1#verify-title text equals 'Check your email'",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#verify-title", "value": "Check your email" }
+        ]
       },
       "screenshot": { "checkpoint": "03-check-your-email" },
       "drive_status": "externally_drivable"
@@ -138,7 +148,12 @@
       "typed_values": [],
       "expected_state": {
         "description": "Exactly the action_link_retrieval record exists whose to matches {email} and whose action_url matches the verification pattern; its token is extracted for the next step.",
-        "observable": "one verification record found for {email}"
+        "observable": "one verification record found for {email}",
+        "assertions": [
+          { "kind": "mail_kind_equals", "value": "verification" },
+          { "kind": "mail_to_equals", "value": "{email}" },
+          { "kind": "mail_subject_contains", "value": "Verify your Focusboard email" }
+        ]
       },
       "screenshot": { "checkpoint": null },
       "drive_status": "externally_drivable",
@@ -156,7 +171,11 @@
       ],
       "expected_state": {
         "description": "Verification accepted; the app returns to the sign-in panel.",
-        "observable": "h1#signin-title visible with a success notice in .auth-notice[role=status]"
+        "observable": "h1#signin-title visible with a success notice in .auth-notice[role=status]",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#signin-title", "value": "Sign in with email" },
+          { "kind": "text_contains", "selector": "section.auth-panel .auth-notice[role=status]", "value": "Email verified. Sign in to continue." }
+        ]
       },
       "screenshot": { "checkpoint": "04-verified-sign-in" },
       "drive_status": "externally_drivable",
@@ -175,7 +194,12 @@
       ],
       "expected_state": {
         "description": "Signed in; after a webview reload the session restores to the Today surface with the six primary nav items.",
-        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today' after reload"
+        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today' after reload",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=nav-today]" },
+          { "kind": "visible", "selector": "[data-testid=nav-settings]" },
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Today" }
+        ]
       },
       "screenshot": { "checkpoint": "05-signed-in-today" },
       "drive_status": "externally_drivable"
@@ -193,7 +217,11 @@
       ],
       "expected_state": {
         "description": "Project board lists the new project with one of the product's restrained palette accents.",
-        "observable": "[data-testid=project-board] .accent-dot matches accent-(amber|olive|clay|slate|moss|plum)"
+        "observable": "[data-testid=project-board] .accent-dot matches accent-(amber|olive|clay|slate|moss|plum)",
+        "assertions": [
+          { "kind": "text_contains", "selector": "[data-testid=project-board] h2", "value": "{project_name}" },
+          { "kind": "visible", "selector": "[data-testid=project-board] .accent-dot:is(.accent-amber,.accent-olive,.accent-clay,.accent-slate,.accent-moss,.accent-plum)" }
+        ]
       },
       "screenshot": { "checkpoint": "06-project-board" },
       "drive_status": "externally_drivable"
@@ -216,7 +244,13 @@
       ],
       "expected_state": {
         "description": "Task row carries the project assignment, due date, and a scheduled reminder.",
-        "observable": "[data-testid=task-row][data-status=todo] exists with detail values set"
+        "observable": "[data-testid=task-row][data-status=todo] exists with detail values set",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=task-row][data-status=todo]" },
+          { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{task_title}" },
+          { "kind": "value_equals", "selector": "[data-testid=task-row] label.task-due input[type=date]", "value": "{due_date}" },
+          { "kind": "value_equals", "selector": "[data-testid=reminder-time]", "value": "{reminder_time}" }
+        ]
       },
       "screenshot": { "checkpoint": "07-task-configured" },
       "drive_status": "externally_drivable"
@@ -231,7 +265,31 @@
       "typed_values": [],
       "expected_state": {
         "description": "Inbox lists the task; Today lists it under its due date; the Projects board shows it in the project column; the Calendar agenda/grid shows it on {due_date}.",
-        "observable": "[data-testid=task-row] with title {task_title} present in each of the four views"
+        "observable": "[data-testid=task-row] with title {task_title} present in each of the four views",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=nav-inbox]" },
+          { "kind": "visible", "selector": "[data-testid=nav-today]" },
+          { "kind": "visible", "selector": "[data-testid=nav-projects]" },
+          { "kind": "visible", "selector": "[data-testid=nav-calendar]" }
+        ]
+      },
+      "view_assertions": {
+        "[data-testid=nav-inbox]": [
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Inbox" },
+          { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{task_title}" }
+        ],
+        "[data-testid=nav-today]": [
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Today" },
+          { "kind": "text_contains", "selector": "[data-testid=task-row] .task-title", "value": "{task_title}" }
+        ],
+        "[data-testid=nav-projects]": [
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Projects" },
+          { "kind": "text_contains", "selector": "[data-testid=project-board] .board-card-title", "value": "{task_title}" }
+        ],
+        "[data-testid=nav-calendar]": [
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Calendar" },
+          { "kind": "text_contains", "selector": "[data-testid=calendar-grid] .calendar-event-title", "value": "{task_title}" }
+        ]
       },
       "screenshot": { "checkpoint": "08-views-presence" },
       "drive_status": "externally_drivable"
@@ -253,7 +311,11 @@
       ],
       "expected_state": {
         "description": "Session reaches running, paused, running again, then completed.",
-        "observable": "[data-testid=focus-active] data-focus-state passes running -> paused -> running -> completed"
+        "observable": "[data-testid=focus-active] data-focus-state passes running -> paused -> running -> completed",
+        "assertions": [
+          { "kind": "text_contains", "selector": ".focus-history .session-row[data-session-state=completed] .session-task", "value": "{task_title}" },
+          { "kind": "text_equals", "selector": ".focus-history .session-row[data-session-state=completed] .session-state", "value": "Completed" }
+        ]
       },
       "screenshot": { "checkpoint": "09-focus-completed" },
       "drive_status": "externally_drivable"
@@ -269,7 +331,12 @@
       "typed_values": [],
       "expected_state": {
         "description": "Exactly one completed row for the task; the Today daily summary reflects one completed focus session for the day.",
-        "observable": "one [data-testid=task-row][data-status=completed] and no duplicate rows"
+        "observable": "one [data-testid=task-row][data-status=completed] and no duplicate rows",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=task-row][data-status=completed]" },
+          { "kind": "text_contains", "selector": "[data-testid=task-row][data-status=completed] .task-title", "value": "{task_title}" },
+          { "kind": "text_contains", "selector": ".focus-day-row[data-focus-state=completed] .focus-day-task", "value": "{task_title}" }
+        ]
       },
       "screenshot": { "checkpoint": "10-completed-summary" },
       "drive_status": "externally_drivable"
@@ -286,7 +353,14 @@
       "typed_values": [],
       "expected_state": {
         "description": "A reminder record exists addressed to {email} whose subject contains the task title, whose body carries the due context, and whose action_url matches focusboard://task?id= with no token.",
-        "observable": "one reminder record matching all three content predicates"
+        "observable": "one reminder record matching all three content predicates",
+        "assertions": [
+          { "kind": "mail_kind_equals", "value": "reminder" },
+          { "kind": "mail_to_equals", "value": "{email}" },
+          { "kind": "mail_subject_contains", "value": "{task_title}" },
+          { "kind": "mail_body_contains", "value": "Task: {task_title}" },
+          { "kind": "mail_body_contains", "value": "Task due {due_date}" }
+        ]
       },
       "screenshot": { "checkpoint": null },
       "drive_status": "externally_drivable",
@@ -305,7 +379,12 @@
       ],
       "expected_state": {
         "description": "After sign-out the auth shell renders; after signing back in, Today still lists the completed task.",
-        "observable": "h1#signin-title after sign-out, then [data-testid=task-row][data-status=completed] after sign-in"
+        "observable": "h1#signin-title after sign-out, then [data-testid=task-row][data-status=completed] after sign-in",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#signin-title", "value": "Sign in with email" },
+          { "kind": "visible", "selector": "[data-testid=task-row][data-status=completed]" },
+          { "kind": "text_contains", "selector": "[data-testid=task-row][data-status=completed] .task-title", "value": "{task_title}" }
+        ]
       },
       "screenshot": { "checkpoint": "11-persisted-after-sign-in" },
       "drive_status": "externally_drivable"
@@ -324,7 +403,10 @@
       ],
       "expected_state": {
         "description": "Forgot-password panel accepts the email; a check-your-email confirmation renders.",
-        "observable": "h1#forgot-sent-title text equals 'Check your email'"
+        "observable": "h1#forgot-sent-title text equals 'Check your email'",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#forgot-sent-title", "value": "Check your email" }
+        ]
       },
       "screenshot": { "checkpoint": "12-forgot-sent" },
       "drive_status": "externally_drivable"
@@ -342,7 +424,12 @@
       "typed_values": [],
       "expected_state": {
         "description": "A reset record exists for {email} whose action_url matches the reset pattern; its token is extracted.",
-        "observable": "one reset record found for {email}"
+        "observable": "one reset record found for {email}",
+        "assertions": [
+          { "kind": "mail_kind_equals", "value": "reset" },
+          { "kind": "mail_to_equals", "value": "{email}" },
+          { "kind": "mail_subject_contains", "value": "Reset your Focusboard password" }
+        ]
       },
       "screenshot": { "checkpoint": null },
       "drive_status": "externally_drivable"
@@ -360,7 +447,11 @@
       ],
       "expected_state": {
         "description": "The reset link opens the set-new-password panel; submitting updates the password.",
-        "observable": "h1#reset-form-title 'Set a new password', then h1#reset-done-title 'Password updated'"
+        "observable": "h1#reset-form-title 'Set a new password', then h1#reset-done-title 'Password updated'",
+        "assertions": [
+          { "kind": "text_equals", "selector": "h1#reset-form-title", "value": "Set a new password" },
+          { "kind": "text_equals", "selector": "h1#reset-done-title", "value": "Password updated" }
+        ]
       },
       "screenshot": { "checkpoint": "13-password-updated" },
       "drive_status": "externally_drivable",
@@ -381,7 +472,11 @@
       ],
       "expected_state": {
         "description": "The new password signs in; the app shell renders.",
-        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today'"
+        "observable": "[data-testid=nav-today] exists and .view-head h1 equals 'Today'",
+        "assertions": [
+          { "kind": "visible", "selector": "[data-testid=nav-today]" },
+          { "kind": "text_equals", "selector": ".view-head h1", "value": "Today" }
+        ]
       },
       "screenshot": { "checkpoint": "14-signed-in-new-password" },
       "drive_status": "externally_drivable"
@@ -397,7 +492,11 @@
       "typed_values": [],
       "expected_state": {
         "description": "A spent or expired reset token renders the invalid/expired panel, and the recovery affordance requests a fresh link back to the check-your-email state.",
-        "observable": "h1#reset-title matches 'isn't valid|expired|already used', then clicking 'Request a fresh link' returns to the forgot-sent state"
+        "observable": "h1#reset-title matches 'isn't valid|expired|already used', then clicking 'Request a fresh link' returns to the forgot-sent state",
+        "assertions": [
+          { "kind": "text_contains", "selector": "h1#reset-title", "value": "This reset link" },
+          { "kind": "text_equals", "selector": "section.auth-panel button.button.primary.block", "value": "Request a fresh link" }
+        ]
       },
       "screenshot": { "checkpoint": "15-expired-link-recovery" },
       "drive_status": "externally_drivable",
