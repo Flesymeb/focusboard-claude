@@ -344,7 +344,27 @@ select:hover {
 }
 
 .quick-add-error {
-  margin: 0 0 8px;
+  margin: 0;
+}
+
+/* PRD 9.2 network-error state: preserved input, attributable failure, Retry. */
+.quick-add-failure {
+  display: flex;
+  align-items: baseline;
+  gap: 6px 16px;
+  flex-wrap: wrap;
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+}
+
+.quick-add-kept {
+  margin: 0;
+  color: var(--ink-faint);
+  font-size: 13px;
 }
 
 .view-head {
@@ -653,6 +673,46 @@ select:hover {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
+  }
+}
+
+/* PRD 9.2 narrow Today: hierarchy survives 640-760px — titles wrap with
+   accessible names, controls stay on-screen and never overlap. */
+@media (max-width: 760px) {
+  .task-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    min-width: 0;
+  }
+
+  .task-row > .field-error {
+    flex: 1 1 100%;
+  }
+
+  .focus-day-row {
+    flex-wrap: wrap;
+  }
+
+  .focus-day-task {
+    flex: 1 1 160px;
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .reminders-head {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .quick-add-failure {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .quick-add-failure .button {
+    flex: none;
   }
 }
 
@@ -974,6 +1034,29 @@ select:hover {
   margin-bottom: 34px;
 }
 
+/* PRD 9.2 compact reminder settings: the deliveries section (timing,
+   timezone, delivery state, test email) reads as a restrained block and
+   starts within the 1280x800 fold, directly after Profile. */
+.settings-reminders .reminders-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 16px;
+  flex-wrap: wrap;
+}
+
+.settings-reminders .reminders-actions {
+  margin-top: 0;
+}
+
+.settings-reminders .delivery-list {
+  border-top: none;
+}
+
+.settings-reminders .delivery-row {
+  padding: 7px 4px;
+}
+
 .settings-danger .section-title {
   border-top: 1px solid var(--rule);
   padding-top: 18px;
@@ -1124,6 +1207,17 @@ select:hover {
   background: transparent;
   color: transparent;
   pointer-events: auto;
+}
+
+/* The fault-injection control must never share the trigger's 24x24 corner:
+   a coordinate click meant for the pinned journey trigger must never arm a
+   fault. Fixed positioning escapes the probe box (no transformed ancestor). */
+.golden-path-probe #fault-inject-composer {
+  position: fixed;
+  left: 0;
+  bottom: 0;
+  width: 24px;
+  height: 24px;
 }
 
 .golden-path-probe-summary {

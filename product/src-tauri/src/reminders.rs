@@ -1,5 +1,5 @@
 use crate::auth::PublicUser;
-use crate::mail::{reminder_message, MailSink};
+use crate::mail::{reminder_message, MailMessage, MailSink};
 use crate::store::{new_id, now_rfc3339, CommandError, CommandResult, Store};
 use chrono::{DateTime, TimeZone, Utc};
 use chrono_tz::Tz;
@@ -253,6 +253,38 @@ pub fn retry_reminder(
             CommandError::new("storage_error", format!("Could not retry reminder: {e}"))
         })?;
     get_reminder(store, user, reminder_id)
+}
+
+/// Delivery-check result for the Settings test-email action. Names only the
+/// recipient address and the subject — never credentials or message bodies.
+#[derive(Debug, Serialize, Clone)]
+pub struct TestEmailOutcome {
+    pub delivered_to: String,
+    pub subject: String,
+}
+
+/// Sends a delivery-check test email to the signed-in user's address through
+/// the configured mail sink. The message carries product identity only — no
+/// token, password, or task content — so it is safe to trigger from Settings.
+pub fn send_test_email(user: &PublicUser, sink: &MailSink) -> CommandResult<TestEmailOutcome> {
+    let message = MailMessage {
+        id: new_id("mail"),
+        to: user.email.clone(),
+        subject: "Focusboard test email".to_string(),
+        body_text: "Focusboard delivery check.\n\nIf this reached your inbox, reminder email delivery works for your account. No action is needed.\n\nManage reminder preferences in Focusboard Settings.".to_string(),
+        action_url: "focusboard://settings".to_string(),
+        created_at: now_rfc3339(),
+    };
+    sink.deliver(&message).map_err(|e| {
+        CommandError::new(
+            "delivery_failed",
+            format!("Could not send the test email: {e}"),
+        )
+    })?;
+    Ok(TestEmailOutcome {
+        delivered_to: user.email.clone(),
+        subject: message.subject,
+    })
 }
 
 fn task_snapshot(

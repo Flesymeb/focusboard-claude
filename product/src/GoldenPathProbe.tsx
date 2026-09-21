@@ -83,6 +83,22 @@ function fail(code: string): never {
   throw { code, message: code };
 }
 
+// Opt-in fault injection for the PRD 9.2 composer failure state. The fault
+// is armed ONLY by an explicit click on the hidden non-focusable control in
+// this probe — never on startup — and is consumed by exactly one subsequent
+// quick-add submit, which then fails locally without touching IPC or storage.
+let composerFaultArmed = false;
+
+export function armComposerFault(): void {
+  composerFaultArmed = true;
+}
+
+export function consumeComposerFault(): boolean {
+  if (!composerFaultArmed) return false;
+  composerFaultArmed = false;
+  return true;
+}
+
 /** "YYYY-MM-DDTHH:mm" two seconds ago in the account's timezone. */
 function pastLocalMinute(timezone: string): string {
   const parts = new Intl.DateTimeFormat("en-CA", {
@@ -340,6 +356,7 @@ export function GoldenPathProbe(props: {
     last_reset_outcome: null,
   });
   const [store, setStore] = useState<StoreLocation | null>(null);
+  const [faultArmed, setFaultArmed] = useState(false);
   const driving = useRef(false);
   const propsRef = useRef(props);
   propsRef.current = props;
@@ -421,6 +438,18 @@ export function GoldenPathProbe(props: {
         id="golden-path-trigger"
         data-testid="golden-path-trigger"
         onClick={start}
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <button
+        type="button"
+        id="fault-inject-composer"
+        data-testid="fault-inject-composer"
+        data-fault-armed={faultArmed ? "composer" : ""}
+        onClick={() => {
+          armComposerFault();
+          setFaultArmed(true);
+        }}
         tabIndex={-1}
         aria-hidden="true"
       />

@@ -47,6 +47,10 @@ export function SettingsView(props: {
   const [sessionNote, setSessionNote] = useState<string | null>(null);
   const [sessionBusy, setSessionBusy] = useState(false);
 
+  const [testEmailNote, setTestEmailNote] = useState<string | null>(null);
+  const [testEmailError, setTestEmailError] = useState<string | null>(null);
+  const [testEmailBusy, setTestEmailBusy] = useState(false);
+
   const [deleteConfirm, setDeleteConfirm] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
@@ -104,6 +108,22 @@ export function SettingsView(props: {
       setSaveError(toCommandError(err).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendTestEmail() {
+    setTestEmailBusy(true);
+    setTestEmailError(null);
+    setTestEmailNote(null);
+    try {
+      const outcome = await invoke<{ delivered_to: string; subject: string }>(
+        "send_test_email"
+      );
+      setTestEmailNote(`Test email sent to ${outcome.delivered_to}.`);
+    } catch (err) {
+      setTestEmailError(toCommandError(err).message);
+    } finally {
+      setTestEmailBusy(false);
     }
   }
 
@@ -266,6 +286,64 @@ export function SettingsView(props: {
         ) : null}
       </section>
 
+      <section className="settings-section settings-reminders" aria-label="Reminder deliveries" data-testid="reminder-deliveries">
+        <div className="reminders-head">
+          <h2 className="section-title">Reminder deliveries</h2>
+          <div className="settings-actions reminders-actions">
+            <button
+              type="button"
+              className="button small"
+              disabled={testEmailBusy}
+              data-testid="send-test-email"
+              onClick={() => void sendTestEmail()}
+            >
+              Send test email
+            </button>
+            {testEmailNote ? (
+              <span className="saved-note" role="status" data-testid="test-email-note">
+                {testEmailNote}
+              </span>
+            ) : null}
+          </div>
+        </div>
+        {testEmailError ? (
+          <p className="field-error" role="alert">
+            {testEmailError}
+          </p>
+        ) : null}
+        {reminders.length === 0 ? (
+          <p className="section-note">
+            No reminders yet. Set a reminder time on any task that has a due date.
+          </p>
+        ) : (
+          <ul className="delivery-list">
+            {reminders.map((r) => (
+              <li key={r.id} className="delivery-row" data-reminder-status={r.status}>
+                <Icon name="mail" size={14} />
+                <span className="delivery-task">{taskTitle(r.task_id)}</span>
+                <span className="delivery-when">
+                  {formatInTimezone(r.scheduled_at, r.timezone)} ({r.timezone})
+                </span>
+                <span className={`delivery-status state-${r.status}`}>{STATUS_COPY[r.status] ?? r.status}</span>
+                {r.status === "failed" ? (
+                  <button
+                    type="button"
+                    className="button small"
+                    disabled={busy}
+                    data-testid={`retry-reminder-${r.id}`}
+                    onClick={() => void retry(r.id)}
+                  >
+                    Retry
+                  </button>
+                ) : r.sent_at ? (
+                  <span className="delivery-sent">sent {formatInTimezone(r.sent_at, r.timezone)}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       <section className="settings-section" aria-label="Password">
         <h2 className="section-title">Password</h2>
         <form
@@ -369,41 +447,6 @@ export function SettingsView(props: {
             {sessionError}
           </p>
         ) : null}
-      </section>
-
-      <section className="settings-section" aria-label="Reminder deliveries">
-        <h2 className="section-title">Reminder deliveries</h2>
-        {reminders.length === 0 ? (
-          <p className="section-note">
-            No reminders yet. Set a reminder time on any task that has a due date.
-          </p>
-        ) : (
-          <ul className="delivery-list">
-            {reminders.map((r) => (
-              <li key={r.id} className="delivery-row" data-reminder-status={r.status}>
-                <Icon name="mail" size={14} />
-                <span className="delivery-task">{taskTitle(r.task_id)}</span>
-                <span className="delivery-when">
-                  {formatInTimezone(r.scheduled_at, r.timezone)} ({r.timezone})
-                </span>
-                <span className={`delivery-status state-${r.status}`}>{STATUS_COPY[r.status] ?? r.status}</span>
-                {r.status === "failed" ? (
-                  <button
-                    type="button"
-                    className="button small"
-                    disabled={busy}
-                    data-testid={`retry-reminder-${r.id}`}
-                    onClick={() => void retry(r.id)}
-                  >
-                    Retry
-                  </button>
-                ) : r.sent_at ? (
-                  <span className="delivery-sent">sent {formatInTimezone(r.sent_at, r.timezone)}</span>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
 
       <section className="settings-section settings-danger" aria-label="Delete account">

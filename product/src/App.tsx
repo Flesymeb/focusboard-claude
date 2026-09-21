@@ -17,7 +17,7 @@ import {
   linkKindFromUrl,
   tokenFromLinkUrl,
 } from "./auth/AuthViews";
-import { GoldenPathProbe } from "./GoldenPathProbe";
+import { GoldenPathProbe, consumeComposerFault } from "./GoldenPathProbe";
 import { CalendarView } from "./views/CalendarView";
 import { FocusView } from "./views/FocusView";
 import { InboxView } from "./views/InboxView";
@@ -70,6 +70,7 @@ export default function App() {
   const [listError, setListError] = useState<string | null>(null);
   const [quickAdd, setQuickAdd] = useState("");
   const [quickAddError, setQuickAddError] = useState<string | null>(null);
+  const [quickAddFailed, setQuickAddFailed] = useState(false);
   const [quickAddBusy, setQuickAddBusy] = useState(false);
   const quickAddRef = useRef<HTMLInputElement>(null);
   const signedIn = session.kind === "signedIn";
@@ -233,10 +234,13 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [signedIn]);
 
-  async function submitQuickAdd(e: FormEvent) {
-    e.preventDefault();
+  // PRD 9.2 network-error state: a failed create keeps the composed text in
+  // the input, names the failed action with honest copy, and offers an
+  // explicit Retry that re-submits the same text exactly once per click.
+  async function runQuickAdd() {
     if (quickAddBusy) return;
     setQuickAddError(null);
+    setQuickAddFailed(false);
     const title = quickAdd.trim();
     if (!title) {
       setQuickAddError("A task needs a title before it can be added.");
@@ -244,6 +248,9 @@ export default function App() {
     }
     setQuickAddBusy(true);
     try {
+      if (consumeComposerFault()) {
+        throw new Error("composer fault injected");
+      }
       await invoke("create_task", { title });
       setQuickAdd("");
       await refreshLists();
@@ -260,10 +267,17 @@ export default function App() {
         return;
       }
       // Keep the typed title so valid input is never lost to a rejection.
-      setQuickAddError(ce.message);
+      const shown = title.length > 40 ? `${title.slice(0, 37)}…` : title;
+      setQuickAddError(`Adding “${shown}” failed: ${ce.message}`);
+      setQuickAddFailed(true);
     } finally {
       setQuickAddBusy(false);
     }
+  }
+
+  async function submitQuickAdd(e: FormEvent) {
+    e.preventDefault();
+    await runQuickAdd();
   }
 
   function resetToSignedOut(notice: string) {
@@ -273,6 +287,7 @@ export default function App() {
     setFocusSessions([]);
     setQuickAdd("");
     setQuickAddError(null);
+    setQuickAddFailed(false);
     setMainView("today");
     setSession({
       kind: "anonymous",
@@ -489,6 +504,7 @@ export default function App() {
             onChange={(e) => {
               setQuickAdd(e.target.value);
               if (quickAddError) setQuickAddError(null);
+              if (quickAddFailed) setQuickAddFailed(false);
             }}
           />
           <button type="submit" className="button primary" data-testid="quick-add-submit" disabled={quickAddBusy}>
@@ -496,9 +512,28 @@ export default function App() {
           </button>
         </form>
         {quickAddError ? (
-          <p className="field-error quick-add-error" role="alert">
-            {quickAddError}
-          </p>
+          <div
+            className="quick-add-failure"
+            role="alert"
+            data-testid="quick-add-failure"
+            data-failed={quickAddFailed ? "true" : "false"}
+          >
+            <p className="field-error quick-add-error">{quickAddError}</p>
+            {quickAddFailed ? (
+              <>
+                <p className="quick-add-kept">Your text is kept — Retry adds it once the service responds.</p>
+                <button
+                  type="button"
+                  className="button"
+                  data-testid="quick-add-retry"
+                  disabled={quickAddBusy}
+                  onClick={() => void runQuickAdd()}
+                >
+                  Retry
+                </button>
+              </>
+            ) : null}
+          </div>
         ) : null}
 
         <header className="view-head">

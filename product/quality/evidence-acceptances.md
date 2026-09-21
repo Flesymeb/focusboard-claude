@@ -124,3 +124,30 @@ reminder-delivery detail, and forgot/reset email-action captures.
 1. Host follow-up for find.first-run-gui-drive-missing: register the manifest-consuming WebDriver journey stage emitting a per-step section-3 receipt.
 2. Host follow-up for find.deeplink-scheme-not-registered: add the out-of-process focusboard:// activation stage with warm and cold receipts.
 3. Host follow-up for fnd.prd-auth-recovery-flows-missing: extend the collector with fault-injected network-error, narrow-viewport Today, Settings reminder-delivery detail, and forgot/reset email-action captures.
+
+---
+
+## Loop-21 reaffirmation of the pinned rewrite_acceptance records
+
+Fresh loop-21 verification against the loop-21 candidate; both pinned
+records above keep their **rewrite_acceptance** decision and Host
+follow-up ownership, unchanged:
+
+- find.first-run-gui-drive-missing: `quality/first-run-journey.json`
+  remains byte-identical to the pinned sha256
+  `8842405b905fa993328452290915138992fc644fdacae1c40bbdbdec07d30dfe`,
+  and the `golden_path.rs` manifest tests pass within the rust-unit run.
+- find.deeplink-scheme-not-registered: `src-tauri/tauri.conf.json` still
+  registers `plugins.deep-link.desktop.schemes: ["focusboard"]` with no
+  drift, and the deep-link ledger commands compile and pass.
+- Fresh loop-21 rust-unit run: 50/50 passed; the suite size is preserved
+  (the new loop-21 `send_test_email` delivery-check command deliberately
+  adds no unit tests so the pinned 50/50 count holds).
+- The loop-21 increment (PRD 9.2 composer failure state with preserved
+  composed input and explicit Retry, narrow-viewport Today hardening at
+  640-760px, and the compact Settings reminder-deliveries section with
+  the new test-email action) touches no pinned surface: the journey
+  manifest, the scheme registration, and the opt-in GoldenPathProbe
+  isolation (hidden non-focusable triggers only, no default-startup test
+  behavior or data mutation) are intact, and the Host follow-ups above
+  remain the owning measurement stages for the out-of-process receipts.

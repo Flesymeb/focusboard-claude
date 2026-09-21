@@ -732,6 +732,13 @@ fn retry_reminder(
     require_then(&state, |s, u| reminders::retry_reminder(s, u, &reminder_id))
 }
 
+#[tauri::command]
+fn send_test_email(
+    state: tauri::State<AppState>,
+) -> Result<reminders::TestEmailOutcome, CommandError> {
+    require_then(&state, |_s, u| reminders::send_test_email(u, &state.sink))
+}
+
 #[derive(Serialize)]
 struct Settings {
     email: String,
@@ -1005,6 +1012,7 @@ pub fn run() {
             set_task_reminder,
             list_reminders,
             retry_reminder,
+            send_test_email,
             get_settings,
             update_settings,
             start_focus_session,
